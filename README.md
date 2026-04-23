@@ -23,7 +23,7 @@ I've developed a Bash-based tool to manage these notes efficiently. It allows me
 1. Clone this repository:
    ```bash
    git clone [https://github.com/Sakit-Babazade/devops-kb.git](https://github.com/Sakit-Babazade/devops-kb.git) ~/Documents/knowledge-base
-````
+   ```
 
 2.  Make the script executable:
     ```bash
