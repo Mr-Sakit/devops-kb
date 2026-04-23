@@ -6,3 +6,8 @@
 
 # TEST
 * **test** : test123
+
+# SAK
+**sakit <command>** : Search something
+**sakit bulk** : Add new descs to md file
+* **sakit add** : Add new desc to md file
