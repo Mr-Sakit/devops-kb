@@ -22,7 +22,7 @@ I've developed a Bash-based tool to manage these notes efficiently. It allows me
 ### Installation:
 1. Clone this repository:
    ```bash
-   git clone [https://github.com/Sakit-Babazade/devops-kb.git](https://github.com/Sakit-Babazade/devops-kb.git) ~/Documents/knowledge-base
+   git clone [https://github.com/Mr-Sakit/devops-kb.git](https://github.com/Mr-Sakit/devops-kb.git) ~/Documents/knowledge-base
    ```
 
 2.  Make the script executable:
@@ -68,4 +68,4 @@ sakit add NETWORK "ip a" "Show all interface addresses"
 ```
 
 
-*Maintained by [Sakit Babazadə](https://github.com/Mr-Sakit) | 2026*
+*Maintained by [Sakit Babazade](https://github.com/Mr-Sakit) | 2026*
