@@ -47,3 +47,6 @@
 * **apk add** : Used to install packages in Alpine-based images
 * **apt-get update** : Updates the package list in Debian/Ubuntu-based images
 * **apt-get install** : Installs packages in Debian/Ubuntu-based images
+
+# MICRO
+* **micro** : Ctrl+S (Save), Ctrl+Q (Quit), Ctrl+E (Command Bar), Ctrl+G (Help)
