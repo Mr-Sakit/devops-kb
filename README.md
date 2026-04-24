@@ -1,71 +1,80 @@
-# 🚀 DevOps Knowledge Base (devops-kb)
+# 🛠️ Sakit-DB: Personal DevOps Knowledge Base
 
-Welcome to my personal DevOps journey! This repository is a centralized, searchable collection of commands, configurations, and best practices I encounter while mastering DevOps and Cyber Security.
+A lightweight, terminal-based knowledge management system designed for DevOps engineers to quickly store and retrieve terminal commands. It features an automated local-to-cloud synchronization workflow.
 
-> "Automation is not just about tools; it's a mindset."
+## 🚀 Key Features
 
-## 🧠 The Concept
+- **Instant Search:** Find any command or cheat sheet directly from your terminal.
+- **Minimalist Data Entry:** Rapidly add single or multiple commands using the `bulk` mode.
+- **Auto-Sync (CI/CD style):** Every update is automatically committed and pushed to GitHub.
+- **Markdown Powered:** All data is stored in a structured `commands.md` file, perfectly rendered in GitHub and Obsidian.
 
-Instead of searching through endless documentation or browser history, I use a custom-built CLI tool named `sakit` to interact with this knowledge base directly from my Fedora terminal.
+---
 
+## 📂 Project Structure
 
+- `devdb.sh`: The core Bash script containing the logic for searching, adding, and syncing.
+- `commands.md`: The central database where all commands are categorized and stored.
 
-## 🛠️ The "sakit" CLI Tool
+---
 
-I've developed a Bash-based tool to manage these notes efficiently. It allows me to search for commands by keywords or add new entries on the fly.
+## 🛠️ Usage
 
-### Features:
-- **Search:** Instant keyword search across all categories.
-- **Auto-Categorization:** Organizes notes under Markdown headers (`# DOCKER`, `# NETWORK`, etc.).
-- **Interactive Add:** A simple command to append new findings without leaving the terminal.
-
-### Installation:
-1. Clone this repository:
-   ```bash
-   git clone [https://github.com/Mr-Sakit/devops-kb.git](https://github.com/Mr-Sakit/devops-kb.git) ~/Documents/knowledge-base
-   ```
-
-2.  Make the script executable:
-    ```bash
-    chmod +x ~/devdb.sh
-    ```
-3.  Add an alias to your `~/.bashrc`:
-    ```bash
-    alias sakit='~/devdb.sh'
-    ```
-4.  Refresh your terminal:
-    ```bash
-    source ~/.bashrc
-    ```
-
-## 📂 Current Structure
-
-The `commands.md` file is organized into several key areas:
-
-  - **Linux Core:** Fedora/DNF, Systemd, and File Permissions.
-  - **Networking:** `nmcli`, `ip`, and troubleshooting tools.
-  - **Containers:** Docker and Podman workflows.
-  - **Infrastructure:** Initial steps into CI/CD and Cloud.
-
-## 🚀 Usage Examples
-
-**Search for a command:**
-
+### 1. Search for a Command
+Simply type `sakit` followed by your keyword:
 ```bash
 sakit docker
 ```
 
-**Add a new entry (Interactive):**
-
+### 2. Add a Single Entry
 ```bash
 sakit add
 ```
+*Interactive prompts will guide you through Category, Command, and Description.*
 
-**Add a new entry (One-liner):**
-
+### 3. Bulk Add (Fast Entry)
+Add multiple commands at once using the minimalist format:
 ```bash
-sakit add NETWORK "ip a" "Show all interface addresses"
+sakit bulk
+```
+**Format in editor:**
+```text
+.LINUX
+htop
+ Process monitor
+ls -la
+ List all files including hidden
 ```
 
+---
 
-*Maintained by [Sakit Babazade](https://github.com/Mr-Sakit) | 2026*
+## ⚙️ How it Works (Automation Workflow)
+
+1. **Input:** The script captures data via terminal or a temporary file.
+2. **Parsing:** The Bash logic cleans and formats the input into Markdown list items (`* **cmd** : desc`).
+3. **Storage:** Appends the formatted data to the appropriate category in `commands.md`.
+4. **Git Sync:**
+   - `git add commands.md`
+   - `git commit -m "feat: updated knowledge base"`
+   - `git push origin main`
+
+---
+
+## 🔧 Installation
+
+1. Clone the repository:
+   ```bash
+   git clone [https://github.com/Mr-Sakit/devops-kb.git](https://github.com/Mr-Sakit/devops-kb.git)
+   ```
+2. Add an alias to your `.bashrc` or `.zshrc`:
+   ```bash
+   alias sakit='~/path/to/devdb.sh'
+   ```
+3. Ensure the script is executable:
+   ```bash
+   chmod +x devdb.sh
+   ```
+
+---
+*Created with a focus on speed and terminal productivity.*
+---
