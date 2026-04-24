@@ -7,6 +7,15 @@ DB_FILE="$BASE_DIR/commands.md"
 
 # --- FUNCTION: ADD NEW COMMAND ---
 add_command() {
+
+	# Read configuration, default to 'off' if not present
+    [[ -f "$CONF_FILE" ]] && source "$CONF_FILE" || WRITE_MODE="off"
+
+    if [[ "$WRITE_MODE" != "on" ]]; then
+        echo -e "\n❌ \e[1;31mPermission Denied: Read-Only Mode active.\e[0m"
+        echo -e "💡 To enable 'add' and 'sync' features, run: \e[1;32msakit setup-git\e[0m\n"
+        return
+    fi
     # Check for arguments or use interactive mode
     if [ ! -z "$2" ] && [ ! -z "$3" ] && [ ! -z "$4" ]; then
         category=$(echo "$2" | tr '[:lower:]' '[:upper:]')
@@ -161,10 +170,51 @@ install_tool() {
 }
 
 
+setup_git() {
+    echo -e "\n🛠️  \e[1;34mStarting Git & SSH Setup Wizard...\e[0m"
+
+    # 1. Git Identity
+    if [[ -z "$(git config --global user.name)" ]]; then
+        read -p "👤 Enter Git Username: " g_name
+        read -p "📧 Enter Git Email: " g_email
+        git config --global user.name "$g_name"
+        git config --global user.email "$g_email"
+    fi
+
+    # 2. SSH Key Generation (ed25519)
+    if [[ ! -f ~/.ssh/id_ed25519 ]]; then
+        echo -e "🔑 Generating new SSH key (ed25519)..."
+        ssh-keygen -t ed25519 -C "$(git config --global user.email)" -f ~/.ssh/id_ed25519 -N ""
+        eval "$(ssh-agent -s)"
+        ssh-add ~/.ssh/id_ed25519
+    fi
+
+    # 3. Display Public Key
+    echo -e "\n✅ \e[1;32mSSH Key created successfully!\e[0m"
+    echo -e "----------------------------------------------------------------"
+    cat ~/.ssh/id_ed25519.pub
+    echo -e "----------------------------------------------------------------"
+    echo -e "👉 \e[1;33mCopy the key above and add it to:\e[0m"
+    echo -e "   https://github.com/settings/keys (New SSH Key)\n"
+
+    # 4. Enable Write Mode
+    echo "WRITE_MODE=\"on\"" > "$CONF_FILE"
+    echo -e "🚀 \e[1;32mWrite Mode is now ENABLED. You can use 'sakit add' now.\e[0m\n"
+}
+
+
 # --- UPDATED MAIN LOGIC ---
 case "$1" in
+    "setup-git")
+        setup_git
+        exit 0
+        ;;
     "add")
-        add_command "$@"
+        if [[ "$2" == "on" || "$2" == "--enable" ]]; then
+            setup_git
+        else
+            add_command "$@"
+        fi
         exit 0
         ;;
     "bulk")
