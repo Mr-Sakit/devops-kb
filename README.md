@@ -26,13 +26,22 @@ Simply type `sakit` followed by your keyword:
 sakit docker
 ```
 
-### 2. Add a Single Entry
+### 2. Deep Category Filtering (New!)
+To see all commands within a specific category (supports multi-word names):
+
+```bash
+sakit @docker
+sakit @docker compose
+```
+*This mode provides a "Full List" view for the targeted category only.*
+
+### 3. Add a Single Entry
 ```bash
 sakit add
 ```
 *Interactive prompts will guide you through Category, Command, and Description.*
 
-### 3. Bulk Add (Fast Entry)
+### 4. Bulk Add (Fast Entry)
 Add multiple commands at once using the minimalist format:
 ```bash
 sakit bulk
@@ -76,5 +85,6 @@ ls -la
    ```
 
 ---
+
 *Created with a focus on speed and terminal productivity.*
----
+
