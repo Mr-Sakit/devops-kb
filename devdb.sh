@@ -3,7 +3,7 @@
 BASE_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 INSTALL_FILE="$BASE_DIR/installations.md"
 DB_FILE="$BASE_DIR/commands.md"
-
+CONF_FILE="$BASE_DIR/.config"
 
 # --- FUNCTION: ADD NEW COMMAND ---
 add_command() {
@@ -198,7 +198,7 @@ setup_git() {
     echo -e "   https://github.com/settings/keys (New SSH Key)\n"
 
     # 4. Enable Write Mode
-    echo "WRITE_MODE=\"on\"" > "$CONF_FILE"
+    echo "WRITE_MODE=\"on\"" > "$BASE_DIR/.config"
     echo -e "🚀 \e[1;32mWrite Mode is now ENABLED. You can use 'sakit add' now.\e[0m\n"
 }
 
