@@ -22,6 +22,8 @@ Sakit-DB is a lightweight, terminal-first knowledge base for DevOps commands. It
 ```bash
 sakit docker
 ```
+Example output:
+![sakit docker example](docker.png)
 
 ### List a Category
 Supports multi-word categories:
@@ -29,25 +31,8 @@ Supports multi-word categories:
 sakit @docker
 sakit @docker compose
 ```
-
-### Add One Command
-```bash
-sakit add
-```
-
-### Bulk Add
-```bash
-sakit bulk
-```
-
-Editor format:
-```text
-.LINUX
-htop
- Process monitor
-ls -la
- List all files including hidden
-```
+Example output:
+![sakit @docker example](@docker.png)
 
 ## How It Works
 
@@ -62,11 +47,19 @@ ls -la
    ```bash
    git clone https://github.com/Mr-Sakit/devops-kb.git
    ```
-2. Run setup (adds alias and makes script executable):
+2. Enter the repo:
+   ```bash
+   cd devops-kb
+   ```
+3. Make setup executable:
+   ```bash
+   chmod +x setup.sh
+   ```
+4. Run setup (adds alias and makes script executable):
    ```bash
    ./setup.sh
    ```
-3. Reload your shell:
+5. Reload your shell:
    ```bash
    source ~/.bashrc
    ```
