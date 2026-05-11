@@ -2,6 +2,8 @@
 
 BASE_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 INSTALL_FILE="$BASE_DIR/installations.md"
+UNINSTALL_FILE="$BASE_DIR/uninstallations.md"
+EXPLAIN_FILE="$BASE_DIR/explanations.md"
 DB_FILE="$BASE_DIR/commands.md"
 CONF_FILE="$BASE_DIR/.config"
 
@@ -63,6 +65,228 @@ add_command() {
 
 # --- MAIN LOGIC ---
 
+colorize_command() {
+    local text="$1"
+
+    text=$(printf '%s' "$text" | sed -E $'s/(<[^>]+>)/\\\033[1;32m\\1\\\033[0m/g')
+    text=$(printf '%s' "$text" | sed -E $'s/(^|[[:space:]])(--[[:alnum:]][[:alnum:]_-]*)/\\1\\\033[1;33m\\2\\\033[0m/g')
+    text=$(printf '%s' "$text" | sed -E $'s/(^|[[:space:]])(-[[:alpha:]][[:alnum:]]*)/\\1\\\033[1;33m\\2\\\033[0m/g')
+
+    printf '%s' "$text"
+}
+
+parse_command_entry() {
+    local entry="$1"
+
+    PARSED_CMD=""
+    PARSED_DESC=""
+
+    if [[ "$entry" =~ ^\*\ \*\*(.*)\*\*\ :\ (.*)$ ]]; then
+        PARSED_CMD="${BASH_REMATCH[1]}"
+        PARSED_DESC="${BASH_REMATCH[2]}"
+        return 0
+    fi
+
+    return 1
+}
+
+list_categories() {
+    echo -e "\n\e[1;35m📚 Available command categories:\e[0m"
+    grep '^# ' "$DB_FILE" | sed 's/^# //' | while IFS= read -r category; do
+        echo -e "  \e[1;32m@\e[0m\e[1;36m$(echo "$category" | tr '[:upper:]' '[:lower:]')\e[0m"
+    done
+    echo -e "\n\e[1;33mTip:\e[0m Use \e[1;32msakit @category\e[0m to list a category.\n"
+}
+
+list_install_tools() {
+    echo -e "\n\e[1;35m🛠️  Available installation tools:\e[0m"
+    grep '^# ' "$INSTALL_FILE" | sed 's/^# //' | while IFS= read -r tool; do
+        echo -e "  \e[1;36m$(echo "$tool" | tr '[:upper:]' '[:lower:]')\e[0m"
+    done
+    echo -e "\n\e[1;33mTip:\e[0m Use \e[1;32msakit install <tool>\e[0m to install a tool.\n"
+}
+
+list_uninstall_tools() {
+    echo -e "\n\e[1;35m🧹 Available uninstall tools:\e[0m"
+    grep '^# ' "$UNINSTALL_FILE" | sed 's/^# //' | while IFS= read -r tool; do
+        echo -e "  \e[1;36m$(echo "$tool" | tr '[:upper:]' '[:lower:]')\e[0m"
+    done
+    echo -e "\n\e[1;33mTip:\e[0m Use \e[1;32msakit uninstall <tool>\e[0m to uninstall a tool.\n"
+}
+
+doctor_ok() {
+    echo -e "✅ \e[1;32m$1\e[0m"
+}
+
+doctor_warn() {
+    echo -e "⚠️  \e[1;33m$1\e[0m"
+}
+
+doctor_fail() {
+    echo -e "❌ \e[1;31m$1\e[0m"
+    DOCTOR_FAILED=true
+}
+
+check_data_format() {
+    local file="$1"
+    local type="$2"
+    local invalid=""
+
+    if [ "$type" = "commands" ]; then
+        invalid=$(awk '/^\* / && $0 !~ /^\* \*\*.*\*\* : .+/ {print FNR ":" $0}' "$file")
+    else
+        invalid=$(awk 'NF && $0 !~ /^# [A-Z0-9 -]+$/ && $0 !~ /^(apt|dnf): / {print FNR ":" $0}' "$file")
+    fi
+
+    if [ -z "$invalid" ]; then
+        doctor_ok "$file format looks valid"
+    else
+        doctor_fail "$file has invalid lines"
+        echo "$invalid"
+    fi
+}
+
+run_doctor() {
+    local pkg_mgr
+    DOCTOR_FAILED=false
+
+    echo -e "\n\e[1;35m🩺 Sakit Doctor\e[0m"
+    echo -e "------------------------------------"
+
+    for file in "$DB_FILE" "$INSTALL_FILE" "$UNINSTALL_FILE" "$EXPLAIN_FILE"; do
+        if [ -f "$file" ]; then
+            doctor_ok "$(basename "$file") exists"
+        else
+            doctor_fail "$(basename "$file") is missing"
+        fi
+    done
+
+    if [ -x "$BASE_DIR/devdb.sh" ]; then
+        doctor_ok "devdb.sh is executable"
+    else
+        doctor_fail "devdb.sh is not executable"
+    fi
+
+    if bash -n "$BASE_DIR/devdb.sh"; then
+        doctor_ok "devdb.sh syntax is valid"
+    else
+        doctor_fail "devdb.sh has syntax errors"
+    fi
+
+    [ -f "$DB_FILE" ] && check_data_format "$DB_FILE" "commands"
+    [ -f "$INSTALL_FILE" ] && check_data_format "$INSTALL_FILE" "steps"
+    [ -f "$UNINSTALL_FILE" ] && check_data_format "$UNINSTALL_FILE" "steps"
+
+    pkg_mgr=$(detect_pkg_mgr)
+    if [ -n "$pkg_mgr" ]; then
+        doctor_ok "supported package manager detected: $pkg_mgr"
+    else
+        doctor_fail "no supported package manager detected (dnf/apt)"
+    fi
+
+    if alias sakit &> /dev/null || grep -q "alias sakit=" ~/.bashrc 2>/dev/null; then
+        doctor_ok "sakit alias is configured"
+    else
+        doctor_warn "sakit alias was not found in current shell or ~/.bashrc"
+    fi
+
+    if [[ -f "$CONF_FILE" ]] && grep -q 'WRITE_MODE="on"' "$CONF_FILE"; then
+        doctor_ok "WRITE_MODE is on"
+    else
+        doctor_warn "WRITE_MODE is off or missing; add/sync features are read-only"
+    fi
+
+    if git -C "$BASE_DIR" remote get-url origin &> /dev/null; then
+        doctor_ok "git origin remote is configured"
+    else
+        doctor_warn "git origin remote is not configured"
+    fi
+
+    echo -e "------------------------------------"
+    if [ "$DOCTOR_FAILED" = true ]; then
+        echo -e "❌ \e[1;31mDoctor found issues that should be fixed.\e[0m\n"
+        return 1
+    fi
+
+    echo -e "✅ \e[1;32mDoctor completed. No blocking issues found.\e[0m\n"
+}
+
+render_explain_line() {
+    local line="$1"
+
+    if [[ "$line" == '```'* ]]; then
+        if [ "$EXPLAIN_CODE_BLOCK" = true ]; then
+            EXPLAIN_CODE_BLOCK=false
+        else
+            EXPLAIN_CODE_BLOCK=true
+        fi
+        return
+    fi
+
+    if [ "$EXPLAIN_CODE_BLOCK" = true ]; then
+        printf '  %s\n' "$(colorize_command "$line")"
+        return
+    fi
+
+    if [[ "$line" == "## "* ]]; then
+        printf '\n\e[1;34m%s\e[0m\n' "${line#'## '}"
+        return
+    fi
+
+    if [[ "$line" == "- "* ]]; then
+        line="${line#- }"
+        line="${line//\`/}"
+        printf '  \e[1;33m-\e[0m %s\n' "$line"
+        return
+    fi
+
+    line="${line//\`/}"
+    printf '%s\n' "$line"
+}
+
+explain_topic() {
+    local topic
+    local key
+    local found=false
+    EXPLAIN_CODE_BLOCK=false
+
+    topic=$(echo "$*" | xargs)
+    key=$(echo "$topic" | tr '[:lower:]' '[:upper:]')
+
+    if [ -z "$topic" ]; then
+        echo -e "❌ \e[1;31mUsage: sakit explain [topic]\e[0m"
+        return 1
+    fi
+
+    if [ ! -f "$EXPLAIN_FILE" ]; then
+        echo -e "❌ \e[1;31mexplanations.md not found.\e[0m"
+        return 1
+    fi
+
+    while IFS= read -r line; do
+        if [[ "$line" == "# "* ]]; then
+            current_topic=$(echo "$line" | sed 's/^# //' | xargs)
+            if [ "$current_topic" == "$key" ]; then
+                found=true
+                echo -e "\n\e[1;35m📖 $current_topic\e[0m"
+                continue
+            elif [ "$found" = true ]; then
+                break
+            fi
+        fi
+
+        if [ "$found" = true ]; then
+            render_explain_line "$line"
+        fi
+    done < "$EXPLAIN_FILE"
+
+    if [ "$found" = false ]; then
+        echo -e "❌ \e[1;31mNo explanation found for '$topic'.\e[0m"
+        echo -e "💡 Try a base command like: \e[1;32mdocker run\e[0m, \e[1;32mkubectl apply\e[0m, \e[1;32mterraform init\e[0m\n"
+        return 1
+    fi
+}
+
 # If user types 'sakit add'
 if [ "$1" == "add" ]; then
     add_command
@@ -71,7 +295,7 @@ fi
 
 # If user types 'sakit [keyword]' (Search mode)
 if [ -z "$1" ]; then
-    echo -e "\e[1;33mUsage: \n  sakit [keyword] -> Search\n  sakit add       -> Add new entry\e[0m"
+    echo -e "\e[1;33mUsage: \n  sakit [keyword]        -> Search\n  sakit @[category]      -> List Category\n  sakit list             -> List command categories\n  sakit doctor           -> Check project health\n  sakit explain <topic>  -> Show a longer explanation\n  sakit install list     -> List installable tools\n  sakit uninstall list   -> List uninstallable tools\n  sakit add              -> Add new entry\e[0m"
     exit 1
 fi
 
@@ -119,16 +343,145 @@ bulk_add() {
 
 
 # --- INSTALLATION LOGIC ---
+parse_tool_args() {
+    PARSED_TOOL=""
+    VERBOSE_MODE=false
+    SHOW_MODE=false
+
+    for arg in "$@"; do
+        case "$arg" in
+            "--verbose"|"--default")
+                VERBOSE_MODE=true
+                ;;
+            "-show"|"--show")
+                SHOW_MODE=true
+                ;;
+            "--quiet")
+                VERBOSE_MODE=false
+                ;;
+            *)
+                PARSED_TOOL="$PARSED_TOOL $arg"
+                ;;
+        esac
+    done
+
+    PARSED_TOOL=$(echo "$PARSED_TOOL" | xargs | tr '[:lower:]' '[:upper:]')
+}
+
+print_command_preview() {
+    local action="$1"
+    local tool="$2"
+    local commands="$3"
+
+    echo -e "\n\e[1;34m$action preview for \e[1;36m$tool\e[0m"
+    echo -e "------------------------------------"
+    printf '%s\n' "$commands"
+    echo -e "------------------------------------"
+    echo -e "\e[1;33mNo commands were executed.\e[0m\n"
+}
+
+installed_command_for() {
+    case "$1" in
+        "AZURE CLI") echo "az" ;;
+        "JAVA") echo "java" ;;
+        "MAVEN") echo "mvn" ;;
+        "NODEJS") echo "node" ;;
+        "SONARQUBE") echo "" ;;
+        *) echo "$(echo "$1" | tr '[:upper:]' '[:lower:]')" ;;
+    esac
+}
+
+detect_pkg_mgr() {
+    if command -v dnf &> /dev/null; then
+        echo "dnf"
+    elif command -v apt &> /dev/null; then
+        echo "apt"
+    fi
+}
+
+commands_need_sudo() {
+    printf '%s\n' "$1" | grep -q 'sudo '
+}
+
+run_command_steps() {
+    local action="$1"
+    local tool="$2"
+    local commands="$3"
+    local verbose="$4"
+    local total=0
+    local step=0
+    local cmd
+    local output_file=""
+
+    total=$(printf '%s\n' "$commands" | sed '/^[[:space:]]*$/d' | wc -l)
+
+    if [ "$verbose" = true ]; then
+        echo -e "\n🚀 \e[1;32m$action started in verbose mode...\e[0m"
+    else
+        if commands_need_sudo "$commands"; then
+            echo -e "\n🔐 \e[1;33mSudo permission may be required.\e[0m"
+            sudo -v || {
+                echo -e "\n❌ \e[1;31mSudo authentication failed. Stopping.\e[0m"
+                return 1
+            }
+        fi
+        echo -e "\n🚀 \e[1;32m$action $tool...\e[0m"
+    fi
+
+    while IFS= read -r cmd; do
+        [ -z "$cmd" ] && continue
+        step=$((step + 1))
+
+        if [ "$verbose" = true ]; then
+            echo -e "\n⚡ Running: \e[1;32m$cmd\e[0m"
+            eval "$cmd"
+        else
+            echo -e "⏳ Step $step/$total..."
+            output_file=$(mktemp)
+            eval "$cmd" > "$output_file" 2>&1
+        fi
+
+        if [ $? -ne 0 ]; then
+            echo -e "\n❌ \e[1;31mCommand failed! Stopping.\e[0m"
+            if [ "$verbose" != true ] && [ -f "$output_file" ]; then
+                echo -e "\n\e[1;34mError output:\e[0m"
+                cat "$output_file"
+                rm -f "$output_file"
+            fi
+            return 1
+        fi
+
+        [ -n "$output_file" ] && rm -f "$output_file"
+        output_file=""
+    done <<< "$commands"
+
+    echo -e "\n✅ \e[1;32m$action of $tool completed successfully!\e[0m"
+}
+
 install_tool() {
-    local tool=$(echo "$1" | tr '[:lower:]' '[:upper:]')
+    local tool
     local pkg_mgr=""
+    local installed_cmd
+    local commands
+    local VERBOSE_MODE
+
+    parse_tool_args "$@"
+    tool="$PARSED_TOOL"
+    if [ -z "$tool" ]; then
+        echo -e "❌ \e[1;31mUsage: sakit install [tool] [--verbose]\e[0m"
+        return 1
+    fi
+
+    installed_cmd=$(installed_command_for "$tool")
+    if [ "$SHOW_MODE" != true ] && [ -n "$installed_cmd" ] && command -v "$installed_cmd" &> /dev/null; then
+        echo -e "\n✅ \e[1;32m$tool is already installed.\e[0m"
+        echo -e "🔎 Found command: \e[1;36m$(command -v "$installed_cmd")\e[0m\n"
+        return
+    fi
 
     # 🔍 Avtomatik OS/Paket Meneceri Tespiti
-    if command -v dnf &> /dev/null; then
-        pkg_mgr="dnf"
-    elif command -v apt &> /dev/null; then
-        pkg_mgr="apt"
-    else
+    pkg_mgr=$(detect_pkg_mgr)
+    if [ -z "$pkg_mgr" ]; then
         echo -e "❌ \e[1;31mError: No supported package manager (dnf/apt) found!\e[0m"
         return
     fi
@@ -144,6 +497,11 @@ install_tool() {
         return
     fi
 
+    if [ "$SHOW_MODE" = true ]; then
+        print_command_preview "Installation" "$tool" "$commands"
+        return
+    fi
+
     echo -e "\e[1;34mThe following commands will be executed:\e[0m"
     echo -e "------------------------------------"
     echo -e "$commands"
@@ -153,19 +511,65 @@ install_tool() {
     read -r choice
 
     if [[ "$choice" =~ ^[Yy]$ ]]; then
-        echo -e "\n🚀 \e[1;32mExecution started...\e[0m"
-        while read -r cmd; do
-            echo -e "\n⚡ Running: \e[1;32m$cmd\e[0m"
-            eval "$cmd"
-
-            if [ $? -ne 0 ]; then
-                echo -e "\n❌ \e[1;31mCommand failed! Stopping installation.\e[0m"
-                return 1
-            fi
-        done <<< "$commands"
-        echo -e "\n✅ \e[1;32mInstallation of $tool completed successfully!\e[0m"
+        run_command_steps "Installation" "$tool" "$commands" "$VERBOSE_MODE"
     else
         echo -e "\n🚫 \e[1;31mInstallation cancelled.\e[0m"
+    fi
+}
+
+uninstall_tool() {
+    local tool
+    local pkg_mgr=""
+    local installed_cmd
+    local commands
+    local VERBOSE_MODE
+
+    parse_tool_args "$@"
+    tool="$PARSED_TOOL"
+    if [ -z "$tool" ]; then
+        echo -e "❌ \e[1;31mUsage: sakit uninstall [tool] [--verbose]\e[0m"
+        return 1
+    fi
+
+    installed_cmd=$(installed_command_for "$tool")
+    if [ "$SHOW_MODE" != true ] && [ -n "$installed_cmd" ] && ! command -v "$installed_cmd" &> /dev/null; then
+        echo -e "\n✅ \e[1;32m$tool is already not installed.\e[0m\n"
+        return
+    fi
+
+    pkg_mgr=$(detect_pkg_mgr)
+    if [ -z "$pkg_mgr" ]; then
+        echo -e "❌ \e[1;31mError: No supported package manager (dnf/apt) found!\e[0m"
+        return
+    fi
+
+    echo -e "\n🛠️  Detecting System... \e[1;33m$pkg_mgr based system detected.\e[0m"
+    echo -e "🔍 Searching uninstall steps for: \e[1;36m$tool\e[0m\n"
+
+    commands=$(sed -n "/# $tool/,/#/p" "$UNINSTALL_FILE" | grep "^$pkg_mgr:" | sed "s/^$pkg_mgr: //")
+
+    if [ -z "$commands" ]; then
+        echo -e "❌ \e[1;31mNo uninstall steps found for '$tool' on $pkg_mgr.\e[0m"
+        return
+    fi
+
+    if [ "$SHOW_MODE" = true ]; then
+        print_command_preview "Uninstall" "$tool" "$commands"
+        return
+    fi
+
+    echo -e "\e[1;34mThe following commands will be executed:\e[0m"
+    echo -e "------------------------------------"
+    echo -e "$commands"
+    echo -e "------------------------------------"
+
+    echo -ne "\e[1;33mDo you want to proceed with uninstall? (y/n): \e[0m"
+    read -r choice
+
+    if [[ "$choice" =~ ^[Yy]$ ]]; then
+        run_command_steps "Uninstall" "$tool" "$commands" "$VERBOSE_MODE"
+    else
+        echo -e "\n🚫 \e[1;31mUninstall cancelled.\e[0m"
     fi
 }
 
@@ -221,16 +625,40 @@ case "$1" in
         bulk_add
         exit 0
         ;;
+    "list")
+        list_categories
+        exit 0
+        ;;
+    "doctor")
+        run_doctor
+        exit $?
+        ;;
+    "explain")
+        explain_topic "${@:2}"
+        exit $?
+        ;;
     "install")
-        if [ -z "$2" ]; then
-            echo -e "❌ \e[1;31mUsage: sakit install [tool]\e[0m"
+        if [[ "$2" == "list" ]]; then
+            list_install_tools
+        elif [ -z "$2" ]; then
+            echo -e "❌ \e[1;31mUsage: sakit install [tool] [-show|--verbose]\e[0m"
         else
-            install_tool "$2"
+            install_tool "${@:2}"
+        fi
+        exit 0
+        ;;
+    "uninstall")
+        if [[ "$2" == "list" ]]; then
+            list_uninstall_tools
+        elif [ -z "$2" ]; then
+            echo -e "❌ \e[1;31mUsage: sakit uninstall [tool] [-show|--verbose]\e[0m"
+        else
+            uninstall_tool "${@:2}"
         fi
         exit 0
         ;;
     "")
-        echo -e "\e[1;33mUsage: \n  sakit [keyword] -> Search\n  sakit @[category] -> List Category\n  sakit add        -> Add new\n  sakit bulk       -> Bulk add\n  sakit install   -> Automated Install\e[0m"
+        echo -e "\e[1;33mUsage: \n  sakit [keyword]          -> Search\n  sakit @[category]        -> List Category\n  sakit list               -> List command categories\n  sakit doctor             -> Check project health\n  sakit explain <topic>    -> Show a longer explanation\n  sakit install list       -> List installable tools\n  sakit uninstall list     -> List uninstallable tools\n  sakit add                -> Add new\n  sakit bulk               -> Bulk add\n  sakit install <tool>     -> Automated Install\n  sakit uninstall <tool>   -> Automated Uninstall\e[0m"
         ;;
     *)
         # THIS IS WHERE SEARCH LOGIC COMES INTO USE
@@ -256,11 +684,9 @@ case "$1" in
                     fi
                 fi
 
-                if [ "$in_zone" = true ] && [[ "$line" == "*"* ]]; then
-                    cmd=$(echo "$line" | cut -d ':' -f 1 | sed 's/\*//g' | xargs)
-                    desc=$(echo "$line" | cut -d ':' -f 2 | xargs)
-                    echo -e "\e[1;32m🚀 COMMAND: \e[0m $cmd"
-                    echo -e "\e[1;34m📝 INFO:    \e[0m$desc"
+                if [ "$in_zone" = true ] && [[ "$line" == "*"* ]] && parse_command_entry "$line"; then
+                    printf '\e[1;32m🚀 COMMAND: \e[0m %s\n' "$(colorize_command "$PARSED_CMD")"
+                    printf '\e[1;34m📝 INFO:    \e[0m%s\n' "$PARSED_DESC"
                     echo -e "------------------------------------"
                     found=true
                 fi
@@ -273,17 +699,14 @@ case "$1" in
                     continue
                 fi
 
-                if echo "$line" | grep -qi "$search_term"; then
-                    cmd=$(echo "$line" | cut -d ':' -f 1 | sed 's/\*//g' | xargs)
-                    desc=$(echo "$line" | cut -d ':' -f 2 | xargs)
-
+                if echo "$line" | grep -qi "$search_term" && parse_command_entry "$line"; then
                     if [ "$current_category" != "$last_category" ]; then
                         echo -e "\e[1;35m📂 CATEGORY: $current_category\e[0m"
                         last_category="$current_category"
                     fi
 
-                    echo -e "\e[1;32m🚀 COMMAND: \e[0m $cmd"
-                    echo -e "\e[1;34m📝 INFO:    \e[0m$desc"
+                    printf '\e[1;32m🚀 COMMAND: \e[0m %s\n' "$(colorize_command "$PARSED_CMD")"
+                    printf '\e[1;34m📝 INFO:    \e[0m%s\n' "$PARSED_DESC"
                     echo -e "------------------------------------"
                     found=true
                 fi
