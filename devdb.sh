@@ -4,6 +4,7 @@ BASE_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 INSTALL_FILE="$BASE_DIR/installations.md"
 UNINSTALL_FILE="$BASE_DIR/uninstallations.md"
 EXPLAIN_FILE="$BASE_DIR/explanations.md"
+TERRAFORM_GENERATOR="$BASE_DIR/generators/terraform.sh"
 DB_FILE="$BASE_DIR/commands.md"
 CONF_FILE="$BASE_DIR/.config"
 
@@ -70,7 +71,7 @@ colorize_command() {
 
     text=$(printf '%s' "$text" | sed -E $'s/(<[^>]+>)/\\\033[1;32m\\1\\\033[0m/g')
     text=$(printf '%s' "$text" | sed -E $'s/(^|[[:space:]])(--[[:alnum:]][[:alnum:]_-]*)/\\1\\\033[1;33m\\2\\\033[0m/g')
-    text=$(printf '%s' "$text" | sed -E $'s/(^|[[:space:]])(-[[:alpha:]][[:alnum:]]*)/\\1\\\033[1;33m\\2\\\033[0m/g')
+    text=$(printf '%s' "$text" | sed -E $'s/(^|[[:space:]])(-[[:alnum:]][[:alnum:]_-]*)/\\1\\\033[1;33m\\2\\\033[0m/g')
 
     printf '%s' "$text"
 }
@@ -171,6 +172,24 @@ run_doctor() {
         doctor_ok "devdb.sh syntax is valid"
     else
         doctor_fail "devdb.sh has syntax errors"
+    fi
+
+    if [ -x "$TERRAFORM_GENERATOR" ]; then
+        doctor_ok "Terraform generator is executable"
+    else
+        doctor_fail "Terraform generator is missing or not executable"
+    fi
+
+    if [ -f "$TERRAFORM_GENERATOR" ] && bash -n "$TERRAFORM_GENERATOR"; then
+        doctor_ok "Terraform generator syntax is valid"
+    else
+        doctor_fail "Terraform generator has syntax errors or is missing"
+    fi
+
+    if [ -d "$BASE_DIR/templates/terraform" ]; then
+        doctor_ok "Terraform templates directory exists"
+    else
+        doctor_fail "Terraform templates directory is missing"
     fi
 
     [ -f "$DB_FILE" ] && check_data_format "$DB_FILE" "commands"
@@ -287,6 +306,66 @@ explain_topic() {
     fi
 }
 
+search_database() {
+    local search_term="$*"
+    local last_category=""
+    local found=false
+    local target_cat=""
+    local in_zone=false
+    local current_cat=""
+    local current_category=""
+    local line
+
+    echo -e "\n🔍 Searching for: '$search_term'...\n"
+
+    if [[ "$search_term" == "@"* ]]; then
+        target_cat=$(echo "$search_term" | sed 's/@//' | tr '[:lower:]' '[:upper:]' | xargs)
+
+        while IFS= read -r line; do
+            if [[ $line == "#"* ]]; then
+                current_cat=$(echo "$line" | sed 's/# //' | xargs)
+                if [ "$current_cat" == "$target_cat" ]; then
+                    in_zone=true
+                    echo -e "\e[1;35m📂 CATEGORY: $current_cat (Full List)\e[0m"
+                    continue
+                else
+                    in_zone=false
+                fi
+            fi
+
+            if [ "$in_zone" = true ] && [[ "$line" == "*"* ]] && parse_command_entry "$line"; then
+                printf '\e[1;32m🚀 COMMAND: \e[0m %s\n' "$(colorize_command "$PARSED_CMD")"
+                printf '\e[1;34m📝 INFO:    \e[0m%s\n' "$PARSED_DESC"
+                echo -e "------------------------------------"
+                found=true
+            fi
+        done < "$DB_FILE"
+    else
+        while IFS= read -r line; do
+            if [[ $line == "#"* ]]; then
+                current_category=$(echo "$line" | sed 's/# //' | xargs)
+                continue
+            fi
+
+            if echo "$line" | grep -qi "$search_term" && parse_command_entry "$line"; then
+                if [ "$current_category" != "$last_category" ]; then
+                    echo -e "\e[1;35m📂 CATEGORY: $current_category\e[0m"
+                    last_category="$current_category"
+                fi
+
+                printf '\e[1;32m🚀 COMMAND: \e[0m %s\n' "$(colorize_command "$PARSED_CMD")"
+                printf '\e[1;34m📝 INFO:    \e[0m%s\n' "$PARSED_DESC"
+                echo -e "------------------------------------"
+                found=true
+            fi
+        done < "$DB_FILE"
+    fi
+
+    if [ "$found" = false ]; then
+        echo -e "\e[1;31m❌ No entries found for '$search_term'.\e[0m"
+    fi
+}
+
 # If user types 'sakit add'
 if [ "$1" == "add" ]; then
     add_command
@@ -295,7 +374,7 @@ fi
 
 # If user types 'sakit [keyword]' (Search mode)
 if [ -z "$1" ]; then
-    echo -e "\e[1;33mUsage: \n  sakit [keyword]        -> Search\n  sakit @[category]      -> List Category\n  sakit list             -> List command categories\n  sakit doctor           -> Check project health\n  sakit explain <topic>  -> Show a longer explanation\n  sakit install list     -> List installable tools\n  sakit uninstall list   -> List uninstallable tools\n  sakit add              -> Add new entry\e[0m"
+    echo -e "\e[1;33mUsage: \n  sakit [keyword]          -> Search\n  sakit @[category]        -> List Category\n  sakit list               -> List command categories\n  sakit doctor             -> Check project health\n  sakit explain <topic>    -> Show a longer explanation\n  sakit terraform new      -> Generate Terraform project\n  sakit install list       -> List installable tools\n  sakit uninstall list     -> List uninstallable tools\n  sakit add                -> Add new entry\e[0m"
     exit 1
 fi
 
@@ -637,6 +716,14 @@ case "$1" in
         explain_topic "${@:2}"
         exit $?
         ;;
+    "terraform"|"tf")
+        if [[ "$2" == "new" ]]; then
+            bash "$TERRAFORM_GENERATOR" "$BASE_DIR" "${@:2}"
+        else
+            search_database "$@"
+        fi
+        exit $?
+        ;;
     "install")
         if [[ "$2" == "list" ]]; then
             list_install_tools
@@ -658,63 +745,9 @@ case "$1" in
         exit 0
         ;;
     "")
-        echo -e "\e[1;33mUsage: \n  sakit [keyword]          -> Search\n  sakit @[category]        -> List Category\n  sakit list               -> List command categories\n  sakit doctor             -> Check project health\n  sakit explain <topic>    -> Show a longer explanation\n  sakit install list       -> List installable tools\n  sakit uninstall list     -> List uninstallable tools\n  sakit add                -> Add new\n  sakit bulk               -> Bulk add\n  sakit install <tool>     -> Automated Install\n  sakit uninstall <tool>   -> Automated Uninstall\e[0m"
+        echo -e "\e[1;33mUsage: \n  sakit [keyword]          -> Search\n  sakit @[category]        -> List Category\n  sakit list               -> List command categories\n  sakit doctor             -> Check project health\n  sakit explain <topic>    -> Show a longer explanation\n  sakit terraform new      -> Generate Terraform project\n  sakit install list       -> List installable tools\n  sakit uninstall list     -> List uninstallable tools\n  sakit add                -> Add new\n  sakit bulk               -> Bulk add\n  sakit install <tool>     -> Automated Install\n  sakit uninstall <tool>   -> Automated Uninstall\e[0m"
         ;;
     *)
-        # THIS IS WHERE SEARCH LOGIC COMES INTO USE
-        search_term="$*"
-
-        echo -e "\n🔍 Searching for: '$search_term'...\n"
-        last_category=""
-        found=false
-
-        if [[ "$search_term" == "@"* ]]; then
-            target_cat=$(echo "$search_term" | sed 's/@//' | tr '[:lower:]' '[:upper:]' | xargs)
-            in_zone=false
-
-            while IFS= read -r line; do
-                if [[ $line == "#"* ]]; then
-                    current_cat=$(echo "$line" | sed 's/# //' | xargs)
-                    if [ "$current_cat" == "$target_cat" ]; then
-                        in_zone=true
-                        echo -e "\e[1;35m📂 CATEGORY: $current_cat (Full List)\e[0m"
-                        continue
-                    else
-                        in_zone=false
-                    fi
-                fi
-
-                if [ "$in_zone" = true ] && [[ "$line" == "*"* ]] && parse_command_entry "$line"; then
-                    printf '\e[1;32m🚀 COMMAND: \e[0m %s\n' "$(colorize_command "$PARSED_CMD")"
-                    printf '\e[1;34m📝 INFO:    \e[0m%s\n' "$PARSED_DESC"
-                    echo -e "------------------------------------"
-                    found=true
-                fi
-            done < "$DB_FILE"
-        else
-            # Standard search mode
-            while IFS= read -r line; do
-                if [[ $line == "#"* ]]; then
-                    current_category=$(echo "$line" | sed 's/# //' | xargs)
-                    continue
-                fi
-
-                if echo "$line" | grep -qi "$search_term" && parse_command_entry "$line"; then
-                    if [ "$current_category" != "$last_category" ]; then
-                        echo -e "\e[1;35m📂 CATEGORY: $current_category\e[0m"
-                        last_category="$current_category"
-                    fi
-
-                    printf '\e[1;32m🚀 COMMAND: \e[0m %s\n' "$(colorize_command "$PARSED_CMD")"
-                    printf '\e[1;34m📝 INFO:    \e[0m%s\n' "$PARSED_DESC"
-                    echo -e "------------------------------------"
-                    found=true
-                fi
-            done < "$DB_FILE"
-        fi
-
-        if [ "$found" = false ]; then
-            echo -e "\e[1;31m❌ No entries found for '$search_term'.\e[0m"
-        fi
+        search_database "$@"
         ;;
 esac

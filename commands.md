@@ -249,6 +249,8 @@
 * **SONAR_TOKEN** : GitHub Actions secret containing the SonarQube authentication token
 
 # TERRAFORM
+* **sakit terraform new** : Generates a starter Terraform project from an interactive template menu
+* **sakit tf new** : Short alias for the Terraform project generator
 * **terraform -version** : Shows the installed Terraform version
 * **terraform init** : Initializes providers, modules, and backend configuration
 * **terraform fmt** : Formats Terraform files using standard HCL style
