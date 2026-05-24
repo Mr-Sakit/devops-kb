@@ -2241,6 +2241,18 @@ CLOUDINIT
   }
 }
 
+resource "azurerm_virtual_machine_extension" "passwordless_sudo" {
+  name                 = "${var.prefix}-passwordless-sudo"
+  virtual_machine_id   = azurerm_linux_virtual_machine.vm.id
+  publisher            = "Microsoft.Azure.Extensions"
+  type                 = "CustomScript"
+  type_handler_version = "2.1"
+
+  settings = jsonencode({
+    commandToExecute = "echo '${var.admin_username} ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/90-${var.admin_username}-nopasswd && chmod 0440 /etc/sudoers.d/90-${var.admin_username}-nopasswd"
+  })
+}
+
 EOF
     fi
 
@@ -2997,6 +3009,18 @@ CLOUDINIT
     sku       = var.image_sku
     version   = var.image_version
   }
+}
+
+resource "azurerm_virtual_machine_extension" "passwordless_sudo" {
+  name                 = "${var.prefix}-passwordless-sudo"
+  virtual_machine_id   = azurerm_linux_virtual_machine.vm.id
+  publisher            = "Microsoft.Azure.Extensions"
+  type                 = "CustomScript"
+  type_handler_version = "2.1"
+
+  settings = jsonencode({
+    commandToExecute = "echo '${var.admin_username} ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/90-${var.admin_username}-nopasswd && chmod 0440 /etc/sudoers.d/90-${var.admin_username}-nopasswd"
+  })
 }
 EOF
     fi

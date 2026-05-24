@@ -499,7 +499,7 @@ run_command_steps() {
     else
         if commands_need_sudo "$commands"; then
             echo -e "\n🔐 \e[1;33mSudo permission may be required.\e[0m"
-            sudo -v || {
+            sudo -n true 2>/dev/null || sudo -v || {
                 echo -e "\n❌ \e[1;31mSudo authentication failed. Stopping.\e[0m"
                 return 1
             }
