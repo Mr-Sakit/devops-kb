@@ -66,13 +66,19 @@ sakit tf new
 
 The interactive mode uses inline arrow-key menus for template and Azure location selection. Common regions are shown first, with additional regions under `More...` grouped by geography. Linux VM, custom builder, and private VMSS stack projects also prompt for VM size, Ubuntu image, and SSH public key when compute resources are selected. VM sizes show a small recommended list first, with extra sizes grouped and paged under `More...`; if Azure CLI is signed in, sizes are discovered from the selected region, otherwise a static fallback list is used.
 
-`Azure Custom Builder` uses a checkbox menu so you can select resources such as Resource Group, VNet, Subnet, NSG, Linux VM, VMSS, Internal Load Balancer, Azure SQL, Private Endpoint, Key Vault, App Gateway/WAF, Monitoring, and Backup. Required dependencies are added automatically. Use `←/→` or `space` to toggle a resource.
+`Azure Custom Builder` uses a checkbox menu so you can select resources such as Resource Group, VNet, Subnet, NSG, Linux VM, VMSS, Internal Load Balancer, Azure SQL, Private Endpoint, Key Vault, App Gateway/WAF, Monitoring, and Backup. Required dependencies are resolved automatically and shown in the architecture preview before files are created. Use `←/→` or `space` to toggle a resource.
+
+Custom Builder supports two project styles: `flat` keeps resources in the root project, while `module` writes root files that call focused child modules under `modules/` such as `network`, `compute`, `load_balancer`, `data`, `security`, and `operations`.
+
+Use `-l` or `--learn` to generate a more explanatory README for labs and study notes. Default mode keeps README files short for practical work.
 
 Non-interactive example:
 ```bash
 sakit terraform new --template azure-vnet-subnet --dir my-vnet-lab --prefix sakit --location swedencentral --yes
 sakit terraform new --template azure-linux-vm --dir my-vm-lab --prefix sakit --location swedencentral --vm-size Standard_B1s --os-image ubuntu-24-04 --ssh-key-file ~/.ssh/id_ed25519.pub --yes
 sakit terraform new --template azure-custom-builder --dir my-custom-lab --prefix sakit --location swedencentral --components resource-group,vnet,subnet,nsg,linux-vm --vm-size Standard_B1s --os-image ubuntu-22-04 --ssh-key-file ~/.ssh/id_ed25519.pub --yes
+sakit terraform new --template azure-custom-builder --dir my-module-lab --prefix sakit --location swedencentral --components internal-lb --style module --vm-size Standard_B1s --os-image ubuntu-22-04 --ssh-key-file ~/.ssh/id_ed25519.pub --yes
+sakit terraform new --template azure-custom-builder --dir my-learning-lab --prefix sakit --location swedencentral --components internal-lb --vm-size Standard_B1s --os-image ubuntu-22-04 --ssh-key-file ~/.ssh/id_ed25519.pub -l --yes
 sakit terraform new --template azure-private-vmss-stack --dir my-private-stack --prefix secureflow --location swedencentral --vm-size Standard_B1s --os-image ubuntu-22-04 --ssh-key-file ~/.ssh/id_ed25519.pub --yes
 ```
 

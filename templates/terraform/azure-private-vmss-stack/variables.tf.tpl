@@ -31,6 +31,12 @@ variable "admin_username" {
 variable "ssh_public_key" {
   description = "SSH public key used for VMSS instances."
   type        = string
+  default     = "__SSH_PUBLIC_KEY__"
+
+  validation {
+    condition     = can(regex("^(ssh-rsa|ssh-ed25519|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521)[[:space:]]+[^[:space:]]+", var.ssh_public_key))
+    error_message = "ssh_public_key must be a complete SSH public key, for example: ssh-ed25519 AAAA... user@host. Do not enter a password or a short word."
+  }
 }
 
 variable "vm_size" {

@@ -20,14 +20,20 @@ OS_IMAGE_ID=""
 SSH_PUBLIC_KEY=""
 SSH_PUBLIC_KEY_FILE=""
 SSH_KEY_SOURCE="placeholder"
+SSH_PRIVATE_KEY_PATH=""
 AZ_ACCOUNT_STATUS="unknown"
 AZ_ACCOUNT_NAME=""
 AZ_SUBSCRIPTION_ID=""
 AZ_ACCOUNT_USER=""
 VM_SIZE_SOURCE="static fallback"
 AUTO_YES=false
+LEARNING_MODE=false
+PROJECT_STYLE="flat"
+PROJECT_STYLE_EXPLICIT=false
 CUSTOM_COMPONENTS=""
 SELECTED_COMPONENT_IDS=()
+ORIGINAL_COMPONENT_IDS=()
+AUTO_ADDED_COMPONENT_IDS=()
 CUSTOM_BUILDER_LOADING=false
 
 template_label() {
@@ -68,6 +74,8 @@ Optional non-interactive flags:
   --ssh-key-file <public-key-path>
   --ssh-public-key <public-key-value>
   --components <comma-separated-custom-builder-components>
+  --style <flat|module>
+  -l, --learn
   --yes
 
 Custom builder components:
@@ -187,8 +195,22 @@ while [ $# -gt 0 ]; do
             CUSTOM_COMPONENTS="$2"
             shift 2
             ;;
+        "--style")
+            if [ $# -lt 2 ]; then
+                echo "Error: --style requires a value."
+                print_usage
+                exit 1
+            fi
+            PROJECT_STYLE="$2"
+            PROJECT_STYLE_EXPLICIT=true
+            shift 2
+            ;;
         "--yes"|"-y")
             AUTO_YES=true
+            shift
+            ;;
+        "--learn"|"-l")
+            LEARNING_MODE=true
             shift
             ;;
         "--help"|"-h")
@@ -213,6 +235,7 @@ menu_label() {
         "vm-size") vm_size_label "$id" ;;
         "os-image") os_image_label "$id" ;;
         "ssh-key") ssh_key_label "$id" ;;
+        "project-style") project_style_label "$id" ;;
         *) echo "$id" ;;
     esac
 }
@@ -226,6 +249,7 @@ menu_description() {
         "vm-size") vm_size_description "$id" ;;
         "os-image") os_image_description "$id" ;;
         "ssh-key") ssh_key_description "$id" ;;
+        "project-style") project_style_description "$id" ;;
         *) echo "" ;;
     esac
 }
@@ -244,7 +268,7 @@ menu_drawn_lines() {
     local rows
     local per_item=2
 
-    if [ "$kind" = "template" ] || [ "$kind" = "os-image" ] || [ "$kind" = "ssh-key" ]; then
+    if [ "$kind" = "template" ] || [ "$kind" = "os-image" ] || [ "$kind" = "ssh-key" ] || [ "$kind" = "project-style" ]; then
         per_item=3
         echo $((4 + (${#menu_ids_ref[@]} * per_item) + 1))
         return
@@ -560,7 +584,34 @@ add_component_once() {
 
     if ! component_selected "$wanted"; then
         SELECTED_COMPONENT_IDS+=("$wanted")
+        return 0
     fi
+
+    return 1
+}
+
+component_in_named_list() {
+    local list_name="$1"
+    local wanted="$2"
+    local -n list_ref=$list_name
+    local item
+
+    for item in "${list_ref[@]}"; do
+        [ "$item" = "$wanted" ] && return 0
+    done
+
+    return 1
+}
+
+valid_custom_component() {
+    case "$1" in
+        "resource-group"|"vnet"|"subnet"|"nsg"|"linux-vm"|"vmss"|"internal-lb"|"azure-sql"|"private-endpoint"|"key-vault"|"app-gateway-waf"|"monitoring"|"backup")
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 normalize_custom_components() {
@@ -572,35 +623,70 @@ normalize_custom_components() {
     for item in "${!SELECTED_COMPONENT_IDS[@]}"; do
         normalized="${SELECTED_COMPONENT_IDS[$item]}"
         normalized="${normalized// /}"
+        if [ -n "$normalized" ] && ! valid_custom_component "$normalized"; then
+            echo "Error: Unknown custom builder component '$normalized'."
+            exit 1
+        fi
         SELECTED_COMPONENT_IDS[$item]="$normalized"
     done
 }
 
 apply_custom_dependencies() {
-    if component_selected "vnet" || component_selected "subnet" || component_selected "nsg" || component_selected "linux-vm" || component_selected "vmss" || component_selected "internal-lb" || component_selected "azure-sql" || component_selected "private-endpoint" || component_selected "key-vault" || component_selected "app-gateway-waf"; then
-        add_component_once "resource-group"
-    fi
+    local changed=true
+    local component
 
-    if component_selected "subnet" || component_selected "nsg" || component_selected "linux-vm" || component_selected "vmss" || component_selected "internal-lb" || component_selected "azure-sql" || component_selected "private-endpoint" || component_selected "key-vault" || component_selected "app-gateway-waf"; then
-        add_component_once "vnet"
-        add_component_once "subnet"
-    fi
+    ORIGINAL_COMPONENT_IDS=("${SELECTED_COMPONENT_IDS[@]}")
 
-    if component_selected "monitoring" || component_selected "backup"; then
-        add_component_once "resource-group"
-    fi
+    while [ "$changed" = true ]; do
+        changed=false
 
-    if component_selected "linux-vm" || component_selected "vmss"; then
-        add_component_once "nsg"
-    fi
+        if component_selected "vnet" || component_selected "subnet" || component_selected "nsg" || component_selected "linux-vm" || component_selected "vmss" || component_selected "internal-lb" || component_selected "azure-sql" || component_selected "private-endpoint" || component_selected "key-vault" || component_selected "app-gateway-waf" || component_selected "monitoring" || component_selected "backup"; then
+            add_component_once "resource-group" && changed=true
+        fi
 
-    if component_selected "internal-lb"; then
-        add_component_once "vmss"
-    fi
+        if component_selected "subnet" || component_selected "nsg" || component_selected "linux-vm" || component_selected "vmss" || component_selected "internal-lb" || component_selected "azure-sql" || component_selected "private-endpoint" || component_selected "key-vault" || component_selected "app-gateway-waf"; then
+            add_component_once "vnet" && changed=true
+            add_component_once "subnet" && changed=true
+        fi
 
-    if component_selected "private-endpoint"; then
-        add_component_once "azure-sql"
-    fi
+        if component_selected "linux-vm" || component_selected "vmss"; then
+            add_component_once "nsg" && changed=true
+        fi
+
+        if component_selected "internal-lb"; then
+            add_component_once "vmss" && changed=true
+        fi
+
+        if component_selected "private-endpoint"; then
+            add_component_once "azure-sql" && changed=true
+        fi
+    done
+
+    AUTO_ADDED_COMPONENT_IDS=()
+    for component in "${SELECTED_COMPONENT_IDS[@]}"; do
+        if ! component_in_named_list ORIGINAL_COMPONENT_IDS "$component"; then
+            AUTO_ADDED_COMPONENT_IDS+=("$component")
+        fi
+    done
+
+    order_custom_components SELECTED_COMPONENT_IDS
+    order_custom_components AUTO_ADDED_COMPONENT_IDS
+}
+
+order_custom_components() {
+    local list_name="$1"
+    local -n list_ref=$list_name
+    local ordered=()
+    local component
+    local order=("resource-group" "vnet" "subnet" "nsg" "linux-vm" "vmss" "internal-lb" "azure-sql" "private-endpoint" "key-vault" "app-gateway-waf" "monitoring" "backup")
+
+    for component in "${order[@]}"; do
+        if component_in_named_list "$list_name" "$component"; then
+            ordered+=("$component")
+        fi
+    done
+
+    list_ref=("${ordered[@]}")
 }
 
 draw_checkbox_menu() {
@@ -802,6 +888,44 @@ choose_custom_components() {
     fi
 
     apply_custom_dependencies
+}
+
+project_style_label() {
+    case "$1" in
+        "flat") echo "Flat files" ;;
+        "module") echo "Module-based" ;;
+        *) echo "$1" ;;
+    esac
+}
+
+project_style_description() {
+    case "$1" in
+        "flat") echo "Generate a simple root project with resources in main.tf." ;;
+        "module") echo "Generate root files plus modules for network, compute, data, security, and operations." ;;
+        *) echo "Terraform project structure." ;;
+    esac
+}
+
+choose_project_style() {
+    local ids=("flat" "module")
+
+    if [ "$TEMPLATE_ID" != "azure-custom-builder" ]; then
+        return
+    fi
+
+    case "$PROJECT_STYLE" in
+        "flat"|"module")
+            if [ "$AUTO_YES" = true ] || [ -n "$CUSTOM_COMPONENTS" ] || [ "$PROJECT_STYLE_EXPLICIT" = true ]; then
+                return
+            fi
+            ;;
+        *)
+            echo "Error: --style must be 'flat' or 'module'."
+            exit 1
+            ;;
+    esac
+
+    interactive_menu ids PROJECT_STYLE "Terraform Project Style" "Choose how generated Terraform code should be organized." "project-style"
 }
 
 vm_size_label() {
@@ -1141,6 +1265,7 @@ detect_azure_account() {
 
 read_ssh_public_key_file() {
     local path="$1"
+    local private_key_path=""
 
     if [ ! -f "$path" ]; then
         echo "Error: SSH public key file '$path' was not found."
@@ -1154,6 +1279,15 @@ read_ssh_public_key_file() {
     fi
 
     SSH_KEY_SOURCE="$path"
+    if [[ "$path" == *.pub ]]; then
+        private_key_path="${path%.pub}"
+        if [[ "$private_key_path" == "$HOME/"* ]]; then
+            private_key_path="~/${private_key_path#"$HOME/"}"
+        fi
+        SSH_PRIVATE_KEY_PATH="$private_key_path"
+    else
+        SSH_PRIVATE_KEY_PATH=""
+    fi
 }
 
 ssh_key_label() {
@@ -1196,12 +1330,14 @@ choose_ssh_key() {
 
     if [ -n "$SSH_PUBLIC_KEY" ]; then
         SSH_KEY_SOURCE="inline value"
+        SSH_PRIVATE_KEY_PATH=""
         return
     fi
 
     if [ "$AUTO_YES" = true ]; then
         SSH_PUBLIC_KEY="ssh-ed25519 CHANGE_ME"
         SSH_KEY_SOURCE="placeholder"
+        SSH_PRIVATE_KEY_PATH=""
         return
     fi
 
@@ -1225,6 +1361,7 @@ choose_ssh_key() {
         "__ssh_placeholder__")
             SSH_PUBLIC_KEY="ssh-ed25519 CHANGE_ME"
             SSH_KEY_SOURCE="placeholder"
+            SSH_PRIVATE_KEY_PATH=""
             ;;
     esac
 }
@@ -1363,6 +1500,11 @@ validate_inputs() {
         exit 1
     fi
 
+    if [ "$TEMPLATE_ID" = "azure-custom-builder" ] && [[ "$PROJECT_STYLE" != "flat" && "$PROJECT_STYLE" != "module" ]]; then
+        echo "Error: Project style must be 'flat' or 'module'."
+        exit 1
+    fi
+
     if [[ "$TEMPLATE_ID" = "azure-linux-vm" || "$TEMPLATE_ID" = "azure-private-vmss-stack" ]] || { [ "$TEMPLATE_ID" = "azure-custom-builder" ] && { component_selected "linux-vm" || component_selected "vmss"; }; }; then
         if [ -z "$VM_SIZE" ]; then
             echo "Error: VM size is required for $TEMPLATE_ID."
@@ -1379,6 +1521,210 @@ validate_inputs() {
             exit 1
         fi
     fi
+}
+
+print_preview_row() {
+    local component="$1"
+    local action="$2"
+    local resource="$3"
+    local detail="$4"
+
+    if component_selected "$component"; then
+        printf '    \033[1;32m%-7s\033[0m %-26s %s\n' "$action" "$resource" "$detail"
+    fi
+}
+
+print_preview_line() {
+    printf '    \033[1;32m%-7s\033[0m %-26s %s\n' "$1" "$2" "$3"
+}
+
+print_preview_section() {
+    printf '\n  \033[1;36m%s\033[0m\n' "$1"
+    printf '  \033[2m%s\033[0m\n' "$2"
+}
+
+custom_preview_has_group() {
+    for component in "$@"; do
+        component_selected "$component" && return 0
+    done
+
+    return 1
+}
+
+write_selected_components_markdown() {
+    local target_file="$1"
+    local component
+
+    for component in "${SELECTED_COMPONENT_IDS[@]}"; do
+        printf -- "- %s\n" "$(custom_component_label "$component")" >> "$target_file"
+    done
+}
+
+write_learning_component_notes() {
+    local target_file="$1"
+
+    if custom_preview_has_group "resource-group" "vnet" "subnet" "nsg"; then
+        cat >> "$target_file" <<'EOF'
+
+## Network Layer
+
+The network layer gives all later resources a place to live. The Resource Group is the Azure container, the Virtual Network is the private address space, and subnets divide the network into roles.
+
+EOF
+        component_selected "resource-group" && cat >> "$target_file" <<'EOF'
+- **Resource Group** keeps the generated resources together so they can be managed and cleaned up as one unit.
+EOF
+        component_selected "vnet" && cat >> "$target_file" <<'EOF'
+- **Virtual Network** creates the private network boundary for compute, data, and private endpoints.
+EOF
+        component_selected "subnet" && cat >> "$target_file" <<'EOF'
+- **Subnets** split the VNet into `appgw`, `web`, `api`, and `data` tiers.
+EOF
+        component_selected "nsg" && cat >> "$target_file" <<'EOF'
+- **Network Security Groups** control allowed traffic for the generated web and API subnets.
+EOF
+    fi
+
+    if custom_preview_has_group "linux-vm" "vmss" "internal-lb"; then
+        cat >> "$target_file" <<'EOF'
+
+## Compute Layer
+
+The compute layer runs Linux workloads. SSH access uses the public key written into `terraform.tfvars.example`.
+
+EOF
+        component_selected "linux-vm" && cat >> "$target_file" <<'EOF'
+- **Linux VM** is useful for single-server labs, jump hosts, or quick experiments.
+EOF
+        component_selected "vmss" && cat >> "$target_file" <<'EOF'
+- **VM Scale Sets** create frontend and backend groups that can later be scaled or attached to load balancers.
+EOF
+        component_selected "internal-lb" && cat >> "$target_file" <<'EOF'
+- **Internal Load Balancers** distribute private traffic to frontend and backend pools without exposing public endpoints.
+EOF
+    fi
+
+    if custom_preview_has_group "azure-sql" "private-endpoint"; then
+        cat >> "$target_file" <<'EOF'
+
+## Data Layer
+
+The data layer uses Azure SQL. Public network access is disabled in the generated SQL server.
+
+EOF
+        component_selected "azure-sql" && cat >> "$target_file" <<'EOF'
+- **Azure SQL** creates a managed SQL server and database.
+EOF
+        component_selected "private-endpoint" && cat >> "$target_file" <<'EOF'
+- **Private Endpoint** connects SQL privately through the data subnet.
+EOF
+    fi
+
+    if custom_preview_has_group "key-vault" "app-gateway-waf"; then
+        cat >> "$target_file" <<'EOF'
+
+## Security Layer
+
+The security layer starts the scaffolding for secrets and edge protection.
+
+EOF
+        component_selected "key-vault" && cat >> "$target_file" <<'EOF'
+- **Key Vault** stores secrets with public network access disabled.
+EOF
+        component_selected "app-gateway-waf" && cat >> "$target_file" <<'EOF'
+- **WAF Policy** enables OWASP managed rules in prevention mode.
+EOF
+    fi
+
+    if custom_preview_has_group "monitoring" "backup"; then
+        cat >> "$target_file" <<'EOF'
+
+## Operations Layer
+
+The operations layer makes the environment easier to observe and recover.
+
+EOF
+        component_selected "monitoring" && cat >> "$target_file" <<'EOF'
+- **Monitoring** creates Log Analytics and Application Insights.
+EOF
+        component_selected "backup" && cat >> "$target_file" <<'EOF'
+- **Backup** creates a Recovery Services Vault and a daily VM backup policy.
+EOF
+    fi
+}
+
+print_custom_architecture_preview() {
+    if [ "$TEMPLATE_ID" != "azure-custom-builder" ]; then
+        return
+    fi
+
+    printf '\n\033[1;36mArchitecture Preview\033[0m\n'
+    printf '\033[2m%s\033[0m\n' '----------------------------------------'
+
+    if custom_preview_has_group "resource-group" "vnet" "subnet" "nsg"; then
+        print_preview_section "Network" "Core Azure networking resources"
+        print_preview_row "resource-group" "create" "Resource Group" "${PREFIX}-rg"
+        print_preview_row "vnet" "create" "Virtual Network" "${PREFIX}-vnet (${LOCATION})"
+        print_preview_row "subnet" "create" "Subnets" "appgw, web, api, data"
+        print_preview_row "nsg" "create" "NSGs" "web/api traffic rules"
+    fi
+
+    if custom_preview_has_group "linux-vm" "vmss" "internal-lb"; then
+        print_preview_section "Compute" "Linux compute and private traffic distribution"
+        print_preview_row "linux-vm" "create" "Linux VM" "${PREFIX}-vm (${VM_SIZE})"
+        print_preview_row "vmss" "create" "VM Scale Sets" "frontend + backend (${VM_SIZE})"
+        print_preview_row "internal-lb" "create" "Internal LBs" "frontend:80, backend:8080"
+    fi
+
+    if custom_preview_has_group "azure-sql" "private-endpoint"; then
+        print_preview_section "Data" "Managed database layer"
+        print_preview_row "azure-sql" "create" "Azure SQL" "${PREFIX}-sql / ${PREFIX}-sqldb"
+        print_preview_row "private-endpoint" "create" "Private Endpoint" "SQL private access via data subnet"
+    fi
+
+    if custom_preview_has_group "key-vault" "app-gateway-waf"; then
+        print_preview_section "Security" "Access and edge protection scaffolds"
+        print_preview_row "key-vault" "create" "Key Vault" "public network access disabled"
+        print_preview_row "app-gateway-waf" "create" "WAF Policy" "OWASP 3.2 prevention mode"
+    fi
+
+    if custom_preview_has_group "monitoring" "backup"; then
+        print_preview_section "Operations" "Observability and recovery resources"
+        print_preview_row "monitoring" "create" "Monitoring" "Log Analytics + Application Insights"
+        print_preview_row "backup" "create" "Backup" "Recovery Services Vault + daily policy"
+    fi
+
+    print_preview_section "Files" "Terraform project files to be written"
+    if [ "$PROJECT_STYLE" = "module" ]; then
+        print_preview_line "write" "versions.tf" "provider and version constraints"
+        print_preview_line "write" "main.tf" "root module calls"
+        print_preview_line "write" "variables.tf" "root input variables"
+        print_preview_line "write" "outputs.tf" "root outputs"
+        print_preview_line "write" "modules/network" "resource group, vnet, subnets, nsgs"
+        custom_preview_has_group "internal-lb" && print_preview_line "write" "modules/load_balancer" "private frontend/backend load balancers"
+        custom_preview_has_group "linux-vm" "vmss" && print_preview_line "write" "modules/compute" "linux vm and vm scale sets"
+        custom_preview_has_group "azure-sql" "private-endpoint" && print_preview_line "write" "modules/data" "sql database and private endpoint"
+        custom_preview_has_group "key-vault" "app-gateway-waf" && print_preview_line "write" "modules/security" "key vault and waf policy"
+        custom_preview_has_group "monitoring" "backup" && print_preview_line "write" "modules/operations" "monitoring and backup"
+        print_preview_line "write" "terraform.tfvars.example" "editable example values"
+        print_preview_line "write" "README.md" "project summary"
+    else
+        print_preview_line "write" "versions.tf" "provider and version constraints"
+        print_preview_line "write" "main.tf" "selected Azure resources"
+        print_preview_line "write" "variables.tf" "input variables"
+        print_preview_line "write" "outputs.tf" "useful outputs"
+        print_preview_line "write" "terraform.tfvars.example" "editable example values"
+        print_preview_line "write" "README.md" "project summary"
+    fi
+
+    if [ "${#AUTO_ADDED_COMPONENT_IDS[@]}" -gt 0 ]; then
+        print_preview_section "Auto-added Dependencies" "Required by the resources you selected"
+        for component in "${AUTO_ADDED_COMPONENT_IDS[@]}"; do
+            print_preview_line "add" "$(custom_component_label "$component")" "dependency"
+        done
+    fi
+
+    printf '\033[2m%s\033[0m\n' '----------------------------------------'
 }
 
 confirm_create() {
@@ -1408,6 +1754,7 @@ confirm_create() {
         printf '  \033[2mSSH Key:\033[0m   %s\n' "$SSH_KEY_SOURCE"
     fi
     if [ "$TEMPLATE_ID" = "azure-custom-builder" ]; then
+        printf '  \033[2mStyle:\033[0m      %s\n' "$(project_style_label "$PROJECT_STYLE")"
         printf '  \033[2mComponents:\033[0m\n'
         for component in "${SELECTED_COMPONENT_IDS[@]}"; do
             printf '    - %s\n' "$(custom_component_label "$component")"
@@ -1419,6 +1766,8 @@ confirm_create() {
             printf '  \033[2mSSH Key:\033[0m   %s\n' "$SSH_KEY_SOURCE"
         fi
     fi
+
+    print_custom_architecture_preview
 
     if [ "$AUTO_YES" = true ]; then
         return
@@ -1441,12 +1790,14 @@ render_templates() {
     local image_offer
     local image_sku
     local ssh_public_key
+    local ssh_private_key_path
 
     project_name=$(basename "$PROJECT_DIR")
     image_publisher=$(os_image_publisher "$OS_IMAGE_ID")
     image_offer=$(os_image_offer "$OS_IMAGE_ID")
     image_sku=$(os_image_sku "$OS_IMAGE_ID")
     ssh_public_key=$(escape_sed_replacement "$SSH_PUBLIC_KEY")
+    ssh_private_key_path=$(escape_sed_replacement "$SSH_PRIVATE_KEY_PATH")
     mkdir -p "$PROJECT_DIR"
 
     while IFS= read -r src; do
@@ -1463,6 +1814,7 @@ render_templates() {
             -e "s|__IMAGE_OFFER__|$image_offer|g" \
             -e "s|__IMAGE_SKU__|$image_sku|g" \
             -e "s|__SSH_PUBLIC_KEY__|$ssh_public_key|g" \
+            -e "s|__SSH_PRIVATE_KEY_PATH__|$ssh_private_key_path|g" \
             "$src" > "$dest"
     done < <(find "$TEMPLATE_ROOT/$TEMPLATE_ID" -type f -name '*.tpl' | sort)
 }
@@ -1472,11 +1824,13 @@ write_custom_builder_project() {
     local image_offer
     local image_sku
     local ssh_public_key
+    local ssh_private_key_path
 
     image_publisher=$(os_image_publisher "$OS_IMAGE_ID")
     image_offer=$(os_image_offer "$OS_IMAGE_ID")
     image_sku=$(os_image_sku "$OS_IMAGE_ID")
     ssh_public_key="$SSH_PUBLIC_KEY"
+    ssh_private_key_path="$SSH_PRIVATE_KEY_PATH"
 
     mkdir -p "$PROJECT_DIR"
 
@@ -1550,6 +1904,17 @@ variable "ssh_public_key" {
   description = "SSH public key for Linux compute resources."
   type        = string
   default     = "$ssh_public_key"
+
+  validation {
+    condition     = can(regex("^(ssh-rsa|ssh-ed25519|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521)[[:space:]]+[^[:space:]]+", var.ssh_public_key))
+    error_message = "ssh_public_key must be a complete SSH public key, for example: ssh-ed25519 AAAA... user@host. Do not enter a password or a short word."
+  }
+}
+
+variable "ssh_private_key_path" {
+  description = "Local private key path used only to print a convenient SSH command."
+  type        = string
+  default     = "$ssh_private_key_path"
 }
 
 variable "vm_size" {
@@ -1845,6 +2210,16 @@ resource "azurerm_linux_virtual_machine" "vm" {
   size                            = var.vm_size
   admin_username                  = var.admin_username
   disable_password_authentication = true
+  custom_data = base64encode(<<-CLOUDINIT
+#cloud-config
+write_files:
+  - path: /etc/sudoers.d/90-${var.admin_username}-nopasswd
+    owner: root:root
+    permissions: '0440'
+    content: |
+      ${var.admin_username} ALL=(ALL) NOPASSWD:ALL
+CLOUDINIT
+  )
   network_interface_ids           = [azurerm_network_interface.vm.id]
   tags                            = local.tags
 
@@ -2121,6 +2496,10 @@ EOF
 output "linux_vm_public_ip" {
   value = azurerm_public_ip.vm.ip_address
 }
+
+output "ssh_command" {
+  value = "ssh ${var.admin_username}@${azurerm_public_ip.vm.ip_address}"
+}
 EOF
     component_selected "vmss" && cat >> "$PROJECT_DIR/outputs.tf" <<'EOF'
 
@@ -2149,6 +2528,7 @@ api_subnet_prefix   = "10.0.13.0/24"
 data_subnet_prefix  = "10.0.14.0/24"
 admin_username      = "azureuser"
 ssh_public_key      = "$ssh_public_key"
+ssh_private_key_path = "$ssh_private_key_path"
 vm_size             = "$VM_SIZE"
 image_publisher     = "$image_publisher"
 image_offer         = "$image_offer"
@@ -2158,7 +2538,75 @@ sql_admin_login     = "sqladminuser"
 sql_admin_password  = "CHANGE_ME_STRONG_PASSWORD"
 EOF
 
-    cat > "$PROJECT_DIR/README.md" <<EOF
+    if [ "$LEARNING_MODE" = true ]; then
+        cat > "$PROJECT_DIR/README.md" <<EOF
+# $(basename "$PROJECT_DIR")
+
+Generated with Sakit-DB Azure Custom Builder.
+
+This README was generated in learning mode. It explains what the selected resources do and how they fit together.
+
+## Selected Components
+
+EOF
+        write_selected_components_markdown "$PROJECT_DIR/README.md"
+
+        cat >> "$PROJECT_DIR/README.md" <<'EOF'
+
+## Architecture Flow
+
+```text
+Resource Group
+  -> Virtual Network
+    -> Subnets
+      -> NSG / Load Balancer / Compute / Private Endpoint
+```
+EOF
+        write_learning_component_notes "$PROJECT_DIR/README.md"
+
+        cat >> "$PROJECT_DIR/README.md" <<'EOF'
+
+## Terraform Workflow
+
+1. Copy example variables:
+
+```bash
+cp terraform.tfvars.example terraform.tfvars
+```
+
+2. Initialize providers:
+
+```bash
+terraform init
+```
+
+3. Preview changes:
+
+```bash
+terraform plan
+```
+
+4. Apply when the plan looks correct:
+
+```bash
+terraform apply
+```
+
+5. Destroy lab resources when finished:
+
+```bash
+terraform destroy
+```
+
+## Things To Review
+
+- Replace placeholder passwords before applying.
+- Review CIDR ranges if you deploy into an existing network.
+- Restrict SSH access before using this outside a lab.
+- Run `terraform plan` carefully before `terraform apply`.
+EOF
+    else
+        cat > "$PROJECT_DIR/README.md" <<EOF
 # $(basename "$PROJECT_DIR")
 
 Generated with Sakit-DB Azure Custom Builder.
@@ -2166,10 +2614,9 @@ Generated with Sakit-DB Azure Custom Builder.
 ## Selected Components
 
 EOF
-    for component in "${SELECTED_COMPONENT_IDS[@]}"; do
-        printf -- "- %s\n" "$(custom_component_label "$component")" >> "$PROJECT_DIR/README.md"
-    done
-    cat >> "$PROJECT_DIR/README.md" <<'EOF'
+        write_selected_components_markdown "$PROJECT_DIR/README.md"
+
+        cat >> "$PROJECT_DIR/README.md" <<'EOF'
 
 ## Next Steps
 
@@ -2182,14 +2629,950 @@ terraform apply
 
 Review generated CIDR ranges, public exposure, and placeholder secrets before applying.
 EOF
+    fi
+}
+
+write_module_network() {
+    local dir="$1"
+
+    cat > "$dir/variables.tf" <<'EOF'
+variable "prefix" { type = string }
+variable "location" { type = string }
+variable "vnet_address_space" { type = string }
+variable "appgw_subnet_prefix" { type = string }
+variable "web_subnet_prefix" { type = string }
+variable "api_subnet_prefix" { type = string }
+variable "data_subnet_prefix" { type = string }
+EOF
+
+    cat > "$dir/main.tf" <<'EOF'
+locals {
+  tags = {
+    project    = var.prefix
+    managed_by = "terraform"
+  }
+}
+
+resource "azurerm_resource_group" "rg" {
+  name     = "${var.prefix}-rg"
+  location = var.location
+  tags     = local.tags
+}
+EOF
+
+    if component_selected "vnet"; then
+        cat >> "$dir/main.tf" <<'EOF'
+
+resource "azurerm_virtual_network" "vnet" {
+  name                = "${var.prefix}-vnet"
+  address_space       = [var.vnet_address_space]
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  tags                = local.tags
+}
+EOF
+    fi
+
+    if component_selected "subnet"; then
+        cat >> "$dir/main.tf" <<'EOF'
+
+resource "azurerm_subnet" "appgw" {
+  name                 = "${var.prefix}-appgw-subnet"
+  resource_group_name  = azurerm_resource_group.rg.name
+  virtual_network_name = azurerm_virtual_network.vnet.name
+  address_prefixes     = [var.appgw_subnet_prefix]
+}
+
+resource "azurerm_subnet" "web" {
+  name                 = "${var.prefix}-web-subnet"
+  resource_group_name  = azurerm_resource_group.rg.name
+  virtual_network_name = azurerm_virtual_network.vnet.name
+  address_prefixes     = [var.web_subnet_prefix]
+}
+
+resource "azurerm_subnet" "api" {
+  name                 = "${var.prefix}-api-subnet"
+  resource_group_name  = azurerm_resource_group.rg.name
+  virtual_network_name = azurerm_virtual_network.vnet.name
+  address_prefixes     = [var.api_subnet_prefix]
+}
+
+resource "azurerm_subnet" "data" {
+  name                              = "${var.prefix}-data-subnet"
+  resource_group_name               = azurerm_resource_group.rg.name
+  virtual_network_name              = azurerm_virtual_network.vnet.name
+  address_prefixes                  = [var.data_subnet_prefix]
+  private_endpoint_network_policies = "Disabled"
+}
+EOF
+    fi
+
+    if component_selected "nsg"; then
+        cat >> "$dir/main.tf" <<'EOF'
+
+resource "azurerm_network_security_group" "web" {
+  name                = "${var.prefix}-web-nsg"
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  tags                = local.tags
+
+  security_rule {
+    name                       = "Allow-HTTP"
+    priority                   = 100
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "80"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
+    name                       = "Allow-SSH"
+    priority                   = 110
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "22"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+}
+
+resource "azurerm_network_security_group" "api" {
+  name                = "${var.prefix}-api-nsg"
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  tags                = local.tags
+
+  security_rule {
+    name                       = "Allow-API"
+    priority                   = 100
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "8080"
+    source_address_prefix      = var.web_subnet_prefix
+    destination_address_prefix = "*"
+  }
+}
+
+resource "azurerm_subnet_network_security_group_association" "web" {
+  subnet_id                 = azurerm_subnet.web.id
+  network_security_group_id = azurerm_network_security_group.web.id
+}
+
+resource "azurerm_subnet_network_security_group_association" "api" {
+  subnet_id                 = azurerm_subnet.api.id
+  network_security_group_id = azurerm_network_security_group.api.id
+}
+EOF
+    fi
+
+    cat > "$dir/outputs.tf" <<'EOF'
+output "rg_name" { value = azurerm_resource_group.rg.name }
+output "rg_location" { value = azurerm_resource_group.rg.location }
+EOF
+
+    if component_selected "subnet"; then
+        cat >> "$dir/outputs.tf" <<'EOF'
+output "web_subnet_id" { value = azurerm_subnet.web.id }
+output "api_subnet_id" { value = azurerm_subnet.api.id }
+output "data_subnet_id" { value = azurerm_subnet.data.id }
+EOF
+    fi
+
+    if component_selected "nsg"; then
+        cat >> "$dir/outputs.tf" <<'EOF'
+output "web_nsg_id" { value = azurerm_network_security_group.web.id }
+EOF
+    fi
+}
+
+
+write_module_load_balancer() {
+    local dir="$1"
+
+    cat > "$dir/variables.tf" <<'EOF'
+variable "prefix" { type = string }
+variable "location" { type = string }
+variable "rg_name" { type = string }
+variable "web_subnet_id" { type = string }
+variable "api_subnet_id" { type = string }
+EOF
+
+    cat > "$dir/main.tf" <<'EOF'
+locals {
+  tags = {
+    project    = var.prefix
+    managed_by = "terraform"
+  }
+}
+
+resource "azurerm_lb" "frontend" {
+  name                = "${var.prefix}-frontend-ilb"
+  location            = var.location
+  resource_group_name = var.rg_name
+  sku                 = "Standard"
+  tags                = local.tags
+
+  frontend_ip_configuration {
+    name                          = "frontend-private"
+    subnet_id                     = var.web_subnet_id
+    private_ip_address_allocation = "Dynamic"
+  }
+}
+
+resource "azurerm_lb_backend_address_pool" "frontend" {
+  name            = "frontend-pool"
+  loadbalancer_id = azurerm_lb.frontend.id
+}
+
+resource "azurerm_lb_probe" "frontend" {
+  name            = "frontend-health"
+  loadbalancer_id = azurerm_lb.frontend.id
+  protocol        = "Tcp"
+  port            = 80
+}
+
+resource "azurerm_lb_rule" "frontend" {
+  name                           = "frontend-http"
+  loadbalancer_id                = azurerm_lb.frontend.id
+  protocol                       = "Tcp"
+  frontend_port                  = 80
+  backend_port                   = 80
+  frontend_ip_configuration_name = "frontend-private"
+  backend_address_pool_ids       = [azurerm_lb_backend_address_pool.frontend.id]
+  probe_id                       = azurerm_lb_probe.frontend.id
+}
+
+resource "azurerm_lb" "backend" {
+  name                = "${var.prefix}-backend-ilb"
+  location            = var.location
+  resource_group_name = var.rg_name
+  sku                 = "Standard"
+  tags                = local.tags
+
+  frontend_ip_configuration {
+    name                          = "backend-private"
+    subnet_id                     = var.api_subnet_id
+    private_ip_address_allocation = "Dynamic"
+  }
+}
+
+resource "azurerm_lb_backend_address_pool" "backend" {
+  name            = "backend-pool"
+  loadbalancer_id = azurerm_lb.backend.id
+}
+
+resource "azurerm_lb_probe" "backend" {
+  name            = "backend-health"
+  loadbalancer_id = azurerm_lb.backend.id
+  protocol        = "Tcp"
+  port            = 8080
+}
+
+resource "azurerm_lb_rule" "backend" {
+  name                           = "backend-http"
+  loadbalancer_id                = azurerm_lb.backend.id
+  protocol                       = "Tcp"
+  frontend_port                  = 8080
+  backend_port                   = 8080
+  frontend_ip_configuration_name = "backend-private"
+  backend_address_pool_ids       = [azurerm_lb_backend_address_pool.backend.id]
+  probe_id                       = azurerm_lb_probe.backend.id
+}
+EOF
+
+    cat > "$dir/outputs.tf" <<'EOF'
+output "frontend_backend_pool_id" { value = azurerm_lb_backend_address_pool.frontend.id }
+output "backend_backend_pool_id" { value = azurerm_lb_backend_address_pool.backend.id }
+EOF
+}
+
+write_module_compute() {
+    local dir="$1"
+
+    cat > "$dir/variables.tf" <<'EOF'
+variable "prefix" { type = string }
+variable "location" { type = string }
+variable "rg_name" { type = string }
+variable "web_subnet_id" { type = string }
+variable "api_subnet_id" { type = string }
+variable "web_nsg_id" { type = string }
+variable "admin_username" { type = string }
+variable "ssh_public_key" { type = string }
+variable "ssh_private_key_path" { type = string }
+variable "vm_size" { type = string }
+variable "image_publisher" { type = string }
+variable "image_offer" { type = string }
+variable "image_sku" { type = string }
+variable "image_version" { type = string }
+variable "frontend_lb_backend_pool_id" {
+  type    = string
+  default = null
+}
+variable "backend_lb_backend_pool_id" {
+  type    = string
+  default = null
+}
+EOF
+
+    cat > "$dir/main.tf" <<'EOF'
+locals {
+  tags = {
+    project    = var.prefix
+    managed_by = "terraform"
+  }
+}
+EOF
+
+    if component_selected "linux-vm"; then
+        cat >> "$dir/main.tf" <<'EOF'
+
+resource "azurerm_public_ip" "vm" {
+  name                = "${var.prefix}-vm-pip"
+  location            = var.location
+  resource_group_name = var.rg_name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+  tags                = local.tags
+}
+
+resource "azurerm_network_interface" "vm" {
+  name                = "${var.prefix}-vm-nic"
+  location            = var.location
+  resource_group_name = var.rg_name
+  tags                = local.tags
+
+  ip_configuration {
+    name                          = "internal"
+    subnet_id                     = var.web_subnet_id
+    private_ip_address_allocation = "Dynamic"
+    public_ip_address_id          = azurerm_public_ip.vm.id
+  }
+}
+
+resource "azurerm_network_interface_security_group_association" "vm" {
+  network_interface_id      = azurerm_network_interface.vm.id
+  network_security_group_id = var.web_nsg_id
+}
+
+resource "azurerm_linux_virtual_machine" "vm" {
+  name                            = "${var.prefix}-vm"
+  location                        = var.location
+  resource_group_name             = var.rg_name
+  size                            = var.vm_size
+  admin_username                  = var.admin_username
+  disable_password_authentication = true
+  custom_data = base64encode(<<-CLOUDINIT
+#cloud-config
+write_files:
+  - path: /etc/sudoers.d/90-${var.admin_username}-nopasswd
+    owner: root:root
+    permissions: '0440'
+    content: |
+      ${var.admin_username} ALL=(ALL) NOPASSWD:ALL
+CLOUDINIT
+  )
+  network_interface_ids           = [azurerm_network_interface.vm.id]
+  tags                            = local.tags
+
+  admin_ssh_key {
+    username   = var.admin_username
+    public_key = var.ssh_public_key
+  }
+
+  os_disk {
+    caching              = "ReadWrite"
+    storage_account_type = "Standard_LRS"
+  }
+
+  source_image_reference {
+    publisher = var.image_publisher
+    offer     = var.image_offer
+    sku       = var.image_sku
+    version   = var.image_version
+  }
+}
+EOF
+    fi
+
+    if component_selected "vmss"; then
+        cat >> "$dir/main.tf" <<'EOF'
+
+resource "azurerm_linux_virtual_machine_scale_set" "frontend" {
+  name                            = "${var.prefix}-frontend-vmss"
+  location                        = var.location
+  resource_group_name             = var.rg_name
+  sku                             = var.vm_size
+  instances                       = 1
+  admin_username                  = var.admin_username
+  disable_password_authentication = true
+  overprovision                   = false
+  upgrade_mode                    = "Manual"
+  tags                            = local.tags
+
+  admin_ssh_key {
+    username   = var.admin_username
+    public_key = var.ssh_public_key
+  }
+
+  os_disk {
+    caching              = "ReadWrite"
+    storage_account_type = "Standard_LRS"
+  }
+
+  source_image_reference {
+    publisher = var.image_publisher
+    offer     = var.image_offer
+    sku       = var.image_sku
+    version   = var.image_version
+  }
+
+  network_interface {
+    name    = "nic-frontend"
+    primary = true
+    ip_configuration {
+      name                                   = "ipconfig"
+      primary                                = true
+      subnet_id                              = var.web_subnet_id
+      load_balancer_backend_address_pool_ids = var.frontend_lb_backend_pool_id == null ? [] : [var.frontend_lb_backend_pool_id]
+    }
+  }
+}
+
+resource "azurerm_linux_virtual_machine_scale_set" "backend" {
+  name                            = "${var.prefix}-backend-vmss"
+  location                        = var.location
+  resource_group_name             = var.rg_name
+  sku                             = var.vm_size
+  instances                       = 1
+  admin_username                  = var.admin_username
+  disable_password_authentication = true
+  overprovision                   = false
+  upgrade_mode                    = "Manual"
+  tags                            = local.tags
+
+  admin_ssh_key {
+    username   = var.admin_username
+    public_key = var.ssh_public_key
+  }
+
+  os_disk {
+    caching              = "ReadWrite"
+    storage_account_type = "Standard_LRS"
+  }
+
+  source_image_reference {
+    publisher = var.image_publisher
+    offer     = var.image_offer
+    sku       = var.image_sku
+    version   = var.image_version
+  }
+
+  network_interface {
+    name    = "nic-backend"
+    primary = true
+    ip_configuration {
+      name                                   = "ipconfig"
+      primary                                = true
+      subnet_id                              = var.api_subnet_id
+      load_balancer_backend_address_pool_ids = var.backend_lb_backend_pool_id == null ? [] : [var.backend_lb_backend_pool_id]
+    }
+  }
+}
+EOF
+    fi
+
+    : > "$dir/outputs.tf"
+    component_selected "linux-vm" && echo 'output "linux_vm_public_ip" { value = azurerm_public_ip.vm.ip_address }' >> "$dir/outputs.tf"
+    component_selected "linux-vm" && echo 'output "ssh_command" { value = "ssh ${var.admin_username}@${azurerm_public_ip.vm.ip_address}" }' >> "$dir/outputs.tf"
+    component_selected "vmss" && {
+        echo 'output "frontend_vmss_name" { value = azurerm_linux_virtual_machine_scale_set.frontend.name }' >> "$dir/outputs.tf"
+        echo 'output "backend_vmss_name" { value = azurerm_linux_virtual_machine_scale_set.backend.name }' >> "$dir/outputs.tf"
+    }
+}
+
+write_module_data() {
+    local dir="$1"
+
+    cat > "$dir/variables.tf" <<'EOF'
+variable "prefix" { type = string }
+variable "location" { type = string }
+variable "rg_name" { type = string }
+variable "data_subnet_id" { type = string }
+variable "sql_admin_login" { type = string }
+variable "sql_admin_password" {
+  type      = string
+  sensitive = true
+}
+EOF
+
+    cat > "$dir/main.tf" <<'EOF'
+locals {
+  tags = {
+    project    = var.prefix
+    managed_by = "terraform"
+  }
+}
+
+resource "azurerm_mssql_server" "sql" {
+  name                          = "${var.prefix}-sql"
+  location                      = var.location
+  resource_group_name           = var.rg_name
+  version                       = "12.0"
+  administrator_login           = var.sql_admin_login
+  administrator_login_password  = var.sql_admin_password
+  public_network_access_enabled = false
+  minimum_tls_version           = "1.2"
+  tags                          = local.tags
+}
+
+resource "azurerm_mssql_database" "sql" {
+  name        = "${var.prefix}-sqldb"
+  server_id   = azurerm_mssql_server.sql.id
+  sku_name    = "S0"
+  max_size_gb = 10
+  tags        = local.tags
+}
+EOF
+    if component_selected "private-endpoint"; then
+        cat >> "$dir/main.tf" <<'EOF'
+
+resource "azurerm_private_endpoint" "sql" {
+  name                = "${var.prefix}-sql-pe"
+  location            = var.location
+  resource_group_name = var.rg_name
+  subnet_id           = var.data_subnet_id
+  tags                = local.tags
+  private_service_connection {
+    name                           = "${var.prefix}-sql-psc"
+    private_connection_resource_id = azurerm_mssql_server.sql.id
+    subresource_names              = ["sqlServer"]
+    is_manual_connection           = false
+  }
+}
+EOF
+    fi
+    echo 'output "sql_server_name" { value = azurerm_mssql_server.sql.name }' > "$dir/outputs.tf"
+}
+
+write_module_security() {
+    local dir="$1"
+
+    cat > "$dir/variables.tf" <<'EOF'
+variable "prefix" { type = string }
+variable "location" { type = string }
+variable "rg_name" { type = string }
+EOF
+
+    cat > "$dir/main.tf" <<'EOF'
+locals {
+  tags = {
+    project    = var.prefix
+    managed_by = "terraform"
+  }
+}
+EOF
+
+    if component_selected "key-vault"; then
+        cat >> "$dir/main.tf" <<'EOF'
+
+data "azurerm_client_config" "current" {}
+
+resource "azurerm_key_vault" "kv" {
+  name                          = substr(replace("${var.prefix}-kv", "-", ""), 0, 24)
+  location                      = var.location
+  resource_group_name           = var.rg_name
+  tenant_id                     = data.azurerm_client_config.current.tenant_id
+  sku_name                      = "standard"
+  rbac_authorization_enabled    = true
+  public_network_access_enabled = false
+  soft_delete_retention_days    = 7
+  tags                          = local.tags
+}
+EOF
+    fi
+
+    if component_selected "app-gateway-waf"; then
+        cat >> "$dir/main.tf" <<'EOF'
+
+resource "azurerm_web_application_firewall_policy" "waf" {
+  name                = "${var.prefix}-waf"
+  location            = var.location
+  resource_group_name = var.rg_name
+  tags                = local.tags
+
+  policy_settings {
+    enabled = true
+    mode    = "Prevention"
+  }
+
+  managed_rules {
+    managed_rule_set {
+      type    = "OWASP"
+      version = "3.2"
+    }
+  }
+}
+EOF
+    fi
+
+    : > "$dir/outputs.tf"
+}
+
+write_module_operations() {
+    local dir="$1"
+
+    cat > "$dir/variables.tf" <<'EOF'
+variable "prefix" { type = string }
+variable "location" { type = string }
+variable "rg_name" { type = string }
+EOF
+
+    cat > "$dir/main.tf" <<'EOF'
+locals {
+  tags = {
+    project    = var.prefix
+    managed_by = "terraform"
+  }
+}
+EOF
+
+    if component_selected "monitoring"; then
+        cat >> "$dir/main.tf" <<'EOF'
+
+resource "azurerm_log_analytics_workspace" "law" {
+  name                = "${var.prefix}-law"
+  location            = var.location
+  resource_group_name = var.rg_name
+  sku                 = "PerGB2018"
+  retention_in_days   = 30
+  tags                = local.tags
+}
+
+resource "azurerm_application_insights" "appi" {
+  name                = "${var.prefix}-appi"
+  location            = var.location
+  resource_group_name = var.rg_name
+  application_type    = "web"
+  workspace_id        = azurerm_log_analytics_workspace.law.id
+  tags                = local.tags
+}
+EOF
+    fi
+
+    if component_selected "backup"; then
+        cat >> "$dir/main.tf" <<'EOF'
+
+resource "azurerm_recovery_services_vault" "rsv" {
+  name                = "${var.prefix}-rsv"
+  location            = var.location
+  resource_group_name = var.rg_name
+  sku                 = "Standard"
+  storage_mode_type   = "GeoRedundant"
+  tags                = local.tags
+}
+
+resource "azurerm_backup_policy_vm" "daily" {
+  name                = "${var.prefix}-daily-backup"
+  resource_group_name = var.rg_name
+  recovery_vault_name = azurerm_recovery_services_vault.rsv.name
+  timezone            = "UTC"
+
+  backup {
+    frequency = "Daily"
+    time      = "23:00"
+  }
+
+  retention_daily {
+    count = 14
+  }
+}
+EOF
+    fi
+
+    : > "$dir/outputs.tf"
+}
+
+write_custom_builder_module_project() {
+    local target_dir="$PROJECT_DIR"
+    local tmp_dir
+
+    tmp_dir=$(mktemp -d /tmp/sakit-custom-module.XXXXXX)
+
+    PROJECT_DIR="$tmp_dir"
+    write_custom_builder_project
+    PROJECT_DIR="$target_dir"
+
+    mkdir -p "$PROJECT_DIR"
+
+    cp "$tmp_dir/versions.tf" "$PROJECT_DIR/versions.tf"
+    cp "$tmp_dir/variables.tf" "$PROJECT_DIR/variables.tf"
+    cp "$tmp_dir/terraform.tfvars.example" "$PROJECT_DIR/terraform.tfvars.example"
+
+    cat > "$PROJECT_DIR/main.tf" <<'EOF'
+module "network" {
+  source = "./modules/network"
+
+  prefix              = var.prefix
+  location            = var.location
+  vnet_address_space  = var.vnet_address_space
+  appgw_subnet_prefix = var.appgw_subnet_prefix
+  web_subnet_prefix   = var.web_subnet_prefix
+  api_subnet_prefix   = var.api_subnet_prefix
+  data_subnet_prefix  = var.data_subnet_prefix
+}
+EOF
+
+    if component_selected "internal-lb"; then
+        cat >> "$PROJECT_DIR/main.tf" <<'EOF'
+
+module "load_balancer" {
+  source = "./modules/load_balancer"
+
+  prefix         = var.prefix
+  location       = var.location
+  rg_name        = module.network.rg_name
+  web_subnet_id  = module.network.web_subnet_id
+  api_subnet_id  = module.network.api_subnet_id
+}
+EOF
+    fi
+
+    if component_selected "linux-vm" || component_selected "vmss"; then
+        cat >> "$PROJECT_DIR/main.tf" <<'EOF'
+
+module "compute" {
+  source = "./modules/compute"
+
+  prefix         = var.prefix
+  location       = var.location
+  rg_name        = module.network.rg_name
+  web_subnet_id  = module.network.web_subnet_id
+  api_subnet_id  = module.network.api_subnet_id
+  web_nsg_id     = module.network.web_nsg_id
+  admin_username      = var.admin_username
+  ssh_public_key      = var.ssh_public_key
+  ssh_private_key_path = var.ssh_private_key_path
+  vm_size             = var.vm_size
+  image_publisher     = var.image_publisher
+  image_offer         = var.image_offer
+  image_sku           = var.image_sku
+  image_version       = var.image_version
+EOF
+        if component_selected "internal-lb"; then
+            cat >> "$PROJECT_DIR/main.tf" <<'EOF'
+  frontend_lb_backend_pool_id = module.load_balancer.frontend_backend_pool_id
+  backend_lb_backend_pool_id  = module.load_balancer.backend_backend_pool_id
+EOF
+        fi
+        cat >> "$PROJECT_DIR/main.tf" <<'EOF'
+}
+EOF
+    fi
+
+    if component_selected "azure-sql"; then
+        cat >> "$PROJECT_DIR/main.tf" <<'EOF'
+
+module "data" {
+  source = "./modules/data"
+
+  prefix             = var.prefix
+  location           = var.location
+  rg_name            = module.network.rg_name
+  data_subnet_id     = module.network.data_subnet_id
+  sql_admin_login     = var.sql_admin_login
+  sql_admin_password  = var.sql_admin_password
+}
+EOF
+    fi
+
+    if component_selected "key-vault" || component_selected "app-gateway-waf"; then
+        cat >> "$PROJECT_DIR/main.tf" <<'EOF'
+
+module "security" {
+  source = "./modules/security"
+
+  prefix   = var.prefix
+  location = var.location
+  rg_name  = module.network.rg_name
+}
+EOF
+    fi
+
+    if component_selected "monitoring" || component_selected "backup"; then
+        cat >> "$PROJECT_DIR/main.tf" <<'EOF'
+
+module "operations" {
+  source = "./modules/operations"
+
+  prefix   = var.prefix
+  location = var.location
+  rg_name  = module.network.rg_name
+}
+EOF
+    fi
+
+    cat > "$PROJECT_DIR/outputs.tf" <<'EOF'
+output "resource_group_name" {
+  value = module.network.rg_name
+}
+EOF
+
+    if component_selected "linux-vm"; then
+        cat >> "$PROJECT_DIR/outputs.tf" <<'EOF'
+
+output "linux_vm_public_ip" {
+  value = module.compute.linux_vm_public_ip
+}
+
+output "ssh_command" {
+  value = module.compute.ssh_command
+}
+EOF
+    fi
+
+    if component_selected "vmss"; then
+        cat >> "$PROJECT_DIR/outputs.tf" <<'EOF'
+
+output "frontend_vmss_name" {
+  value = module.compute.frontend_vmss_name
+}
+
+output "backend_vmss_name" {
+  value = module.compute.backend_vmss_name
+}
+EOF
+    fi
+
+    if component_selected "azure-sql"; then
+        cat >> "$PROJECT_DIR/outputs.tf" <<'EOF'
+
+output "sql_server_name" {
+  value = module.data.sql_server_name
+}
+EOF
+    fi
+
+    mkdir -p "$PROJECT_DIR/modules/network"
+    write_module_network "$PROJECT_DIR/modules/network"
+
+    if component_selected "internal-lb"; then
+        mkdir -p "$PROJECT_DIR/modules/load_balancer"
+        write_module_load_balancer "$PROJECT_DIR/modules/load_balancer"
+    fi
+
+    if component_selected "linux-vm" || component_selected "vmss"; then
+        mkdir -p "$PROJECT_DIR/modules/compute"
+        write_module_compute "$PROJECT_DIR/modules/compute"
+    fi
+
+    if component_selected "azure-sql"; then
+        mkdir -p "$PROJECT_DIR/modules/data"
+        write_module_data "$PROJECT_DIR/modules/data"
+    fi
+
+    if component_selected "key-vault" || component_selected "app-gateway-waf"; then
+        mkdir -p "$PROJECT_DIR/modules/security"
+        write_module_security "$PROJECT_DIR/modules/security"
+    fi
+
+    if component_selected "monitoring" || component_selected "backup"; then
+        mkdir -p "$PROJECT_DIR/modules/operations"
+        write_module_operations "$PROJECT_DIR/modules/operations"
+    fi
+
+    cp "$tmp_dir/README.md" "$PROJECT_DIR/README.md"
+    sed -i "1s|.*|# $(basename "$PROJECT_DIR")|" "$PROJECT_DIR/README.md"
+    cat >> "$PROJECT_DIR/README.md" <<'EOF'
+
+## Project Style
+
+This project was generated in module-based mode. Root files call generated child modules under `modules/`.
+EOF
+
+    rm -rf "$tmp_dir"
 }
 
 render_project() {
     if [ "$TEMPLATE_ID" = "azure-custom-builder" ]; then
-        write_custom_builder_project
+        if [ "$PROJECT_STYLE" = "module" ]; then
+            write_custom_builder_module_project
+        else
+            write_custom_builder_project
+        fi
     else
         render_templates
     fi
+}
+
+append_template_learning_readme() {
+    local readme="$PROJECT_DIR/README.md"
+
+    if [ "$LEARNING_MODE" != true ] || [ "$TEMPLATE_ID" = "azure-custom-builder" ] || [ ! -f "$readme" ]; then
+        return
+    fi
+
+    cat >> "$readme" <<EOF
+
+## Learning Notes
+
+This section was added because the project was generated with learning mode.
+
+### What This Template Teaches
+
+EOF
+
+    case "$TEMPLATE_ID" in
+        "azure-resource-group")
+            cat >> "$readme" <<'EOF'
+- How to configure the AzureRM provider.
+- How to create the simplest Azure container resource with Terraform.
+- How variables and `terraform.tfvars.example` separate inputs from resource code.
+EOF
+            ;;
+        "azure-vnet-subnet")
+            cat >> "$readme" <<'EOF'
+- How a Resource Group, Virtual Network, and Subnet relate to each other.
+- How Terraform references one resource from another.
+- Why address spaces and subnet prefixes should be planned before deployment.
+EOF
+            ;;
+        "azure-linux-vm")
+            cat >> "$readme" <<'EOF'
+- How a Linux VM depends on networking, public IP, NIC, and NSG resources.
+- How SSH public key authentication is wired into `azurerm_linux_virtual_machine`.
+- How Azure image fields map to publisher, offer, SKU, and version.
+EOF
+            ;;
+        "azure-private-vmss-stack")
+            cat >> "$readme" <<'EOF'
+- How a private app stack can be split into network, load balancer, compute, and database modules.
+- How VM Scale Sets attach to internal load balancer backend pools.
+- How private Azure SQL access changes the network design.
+EOF
+            ;;
+    esac
+
+    cat >> "$readme" <<'EOF'
+
+### Practice Workflow
+
+```bash
+terraform init
+terraform fmt
+terraform validate
+terraform plan
+terraform apply
+```
+
+Use `terraform destroy` when you are done with lab resources.
+EOF
 }
 
 format_generated_project() {
@@ -2204,12 +3587,14 @@ choose_location
 show_custom_builder_loading
 detect_azure_account
 choose_custom_components
+choose_project_style
 choose_vm_size
 choose_os_image
 choose_ssh_key
 validate_inputs
 confirm_create
 render_project
+append_template_learning_readme
 format_generated_project
 
 printf '\n\033[1;32mCreated Terraform project:\033[0m\n'

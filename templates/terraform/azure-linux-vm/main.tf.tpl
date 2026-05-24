@@ -62,11 +62,22 @@ resource "azurerm_network_interface_security_group_association" "nic_nsg" {
 }
 
 resource "azurerm_linux_virtual_machine" "vm" {
-  name                = "${var.prefix}-vm"
-  resource_group_name = azurerm_resource_group.rg.name
-  location            = azurerm_resource_group.rg.location
-  size                = var.vm_size
-  admin_username      = var.admin_username
+  name                            = "${var.prefix}-vm"
+  resource_group_name             = azurerm_resource_group.rg.name
+  location                        = azurerm_resource_group.rg.location
+  size                            = var.vm_size
+  admin_username                  = var.admin_username
+  disable_password_authentication = true
+  custom_data = base64encode(<<-EOF
+#cloud-config
+write_files:
+  - path: /etc/sudoers.d/90-${var.admin_username}-nopasswd
+    owner: root:root
+    permissions: '0440'
+    content: |
+      ${var.admin_username} ALL=(ALL) NOPASSWD:ALL
+EOF
+  )
   network_interface_ids = [
     azurerm_network_interface.nic.id
   ]

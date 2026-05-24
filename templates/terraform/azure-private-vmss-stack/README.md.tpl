@@ -27,4 +27,4 @@ terraform plan
 terraform apply
 ```
 
-Review `terraform.tfvars` before applying. Replace placeholder secrets and confirm that the existing Resource Group, VNet, subnet CIDRs, and static private IPs match your Azure environment.
+The selected SSH public key is already written as the default value in `variables.tf`. Review `terraform.tfvars` before applying, replace placeholder secrets, and confirm that the existing Resource Group, VNet, subnet CIDRs, and static private IPs match your Azure environment.

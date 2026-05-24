@@ -31,12 +31,24 @@ variable "admin_username" {
 variable "ssh_public_key" {
   description = "SSH public key used to access the Linux VM."
   type        = string
+  default     = "__SSH_PUBLIC_KEY__"
+
+  validation {
+    condition     = can(regex("^(ssh-rsa|ssh-ed25519|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521)[[:space:]]+[^[:space:]]+", var.ssh_public_key))
+    error_message = "ssh_public_key must be a complete SSH public key, for example: ssh-ed25519 AAAA... user@host. Do not enter a password or a short word."
+  }
 }
 
 variable "ssh_source_address_prefix" {
   description = "Source IP/CIDR allowed to SSH into the VM."
   type        = string
   default     = "*"
+}
+
+variable "ssh_private_key_path" {
+  description = "Local private key path used only to print a convenient SSH command."
+  type        = string
+  default     = "__SSH_PRIVATE_KEY_PATH__"
 }
 
 variable "vm_size" {
